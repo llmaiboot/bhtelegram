@@ -139,7 +139,7 @@ BhTelegram also builds for Android (Tauri 2 mobile). Tested on an x86_64 emulato
    ./scripts/build-tdlib-android.sh ~/projects/td ~/projects/bhtelegram-deps/android
    ```
 2. Requirements: Android SDK + NDK 29 (`$ANDROID_HOME`, `$NDK_HOME`), JDK 21, rustup with
-   `aarch64-linux-android` and `x86_64-linux-android` targets. `tdlib-rs` must contain the
+   `aarch64-linux-android` and `x86_64-linux-android` targets. `tdlib-rs` (branch `bhtelegram-mobile` of github.com/llmaiboot/tdlib-rs) must contain the
    `TDJSON_LIB_DIR` support in `tdlib/build.rs` (mobile targets skip pkg-config).
 3. Build:
    ```bash
