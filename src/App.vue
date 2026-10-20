@@ -10,7 +10,7 @@ import '@fortawesome/fontawesome-svg-core/styles.css';
 
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import { ref, onBeforeMount, onDeactivated } from "vue";
-import { getTheme, isInitialConfigDone } from "./settings/settings";
+import { applyTheme, getTheme, isInitialConfigDone } from "./settings/settings";
 import InitialConfiguration from "./settings/InitialConfiguration.vue";
 import EncryptionPassword from './EncryptionPassword.vue';
 import PhoneNumber from './login/PhoneNumber.vue';
@@ -23,7 +23,6 @@ import { invoke } from '@tauri-apps/api/core';
 import { store } from './store';
 import { handleUsersUpdates } from './services/users';
 import { handleEffectsUpdates } from './services/effects';
-import { getCurrentWindow } from '@tauri-apps/api/window';
 import { handleFoldersUpdates } from './services/folders';
 
 enum MainWindowState {
@@ -78,10 +77,7 @@ onBeforeMount(async () => {
 });
 
 async function initTheme() {
-  const theme = await getTheme();
-  if (theme) {
-    await getCurrentWindow().setTheme(theme);
-  }
+  await applyTheme(await getTheme());
 }
 
 async function getInitialState() {

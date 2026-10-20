@@ -2,13 +2,15 @@
 import { store } from './store';
 import Dropdown from './components/Dropdown.vue';
 import { onMounted, ref, watch } from 'vue';
-import { getDefaultChatFolder, getHideMarginRight, getImageViewer, setDefaultChatFolder, setHideMarginRight, setImageViewer, setTheme } from './settings/settings';
+import { getDefaultChatFolder, getHideMarginRight, getImageViewer, setDefaultChatFolder, setHideMarginRight, setImageViewer, setTheme, getTheme, applyTheme } from './settings/settings';
 import { changeKeyPassphrase, exportPublicKey, exportSecretKey, getMyKeyFingerprint } from './services/pgp';
 import { save } from '@tauri-apps/plugin-dialog';
-import { getCurrentWindow, Theme } from '@tauri-apps/api/window';
+import { Theme } from '@tauri-apps/api/window';
 import { PrivacySettings, PublicKeyFingerprints } from './model';
 import { invoke } from '@tauri-apps/api/core';
 import { hideAllChats } from './services/pgp';
+import { isMobile } from './services/platform';
+const mobile = isMobile();
 import { selectChat } from './services/chats';
 import { FontAwesomeIcon } from '@fortawesome/vue-fontawesome';
 import { faLock, faKey } from '@fortawesome/free-solid-svg-icons';
@@ -54,7 +56,8 @@ onMounted(async () => {
       keyError.value = err.message;
     }
   }
-  theme.value = await getCurrentWindow().theme() || 'light';
+  theme.value = (await getTheme())
+    || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
   imageViewer.value = await getImageViewer();
   hideMarginRight.value = await getHideMarginRight();
   privacy.value = await invoke<PrivacySettings>('get_privacy_settings');
@@ -116,7 +119,7 @@ async function changePassphrase() {
 watch(
   () => theme.value,
   async (newValue) => {
-    await getCurrentWindow().setTheme(newValue);
+    await applyTheme(newValue);
   }
 );
 </script>
@@ -220,6 +223,7 @@ watch(
           </label>
         </div>
 
+        <template v-if="!mobile">
         <p class="menu-label mt-4">Image viewer</p>
         <div class="control">
           <label class="radio mr-2">
@@ -244,6 +248,7 @@ watch(
           </label>
         </div>
         <p><em>This is a workaround to prevent a scrollbar issue with WebKit</em></p>
+        </template>
       </section>
       <footer class="modal-card-foot p-2">
         <div class="buttons">

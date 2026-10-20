@@ -5,6 +5,7 @@ import { downloadFile } from '../services/files';
 import { openPath } from '@tauri-apps/plugin-opener';
 import { store } from '../store';
 import { getAllWebviewWindows, WebviewWindow } from '@tauri-apps/api/webviewWindow';
+import { isMobile } from '../services/platform';
 import { getImageViewer } from '../settings/settings';
 import { convertFileSrc } from '@tauri-apps/api/core';
 
@@ -60,7 +61,8 @@ async function openPhoto() {
 async function openPhotoInNewWindow(photo: File, largerSize: PhotoSize) {
   if (photo.path) {
     const imageViewer = await getImageViewer();
-    if (imageViewer === 'system') {
+    // Phones cannot open extra webview windows: always use the system viewer
+    if (imageViewer === 'system' || isMobile()) {
       await openPath(`file://${photo.path}`);
     } else {
       await openPhotoInTauriWindows(photo, largerSize);

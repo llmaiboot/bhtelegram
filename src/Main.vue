@@ -12,10 +12,12 @@ import { FontAwesomeIcon } from '@fortawesome/vue-fontawesome';
 import { faAsterisk, faEdit } from '@fortawesome/free-solid-svg-icons';
 import FoldersModal from './FoldersModal.vue';
 import { getHideMarginRight } from './settings/settings.ts';
+import { isMobile } from './services/platform';
 
 onMounted(async () => {
   await loadChats();
-  store.hideMarginRight = await getHideMarginRight();
+  // the right margin is a desktop WebKitGTK scrollbar workaround only
+  store.hideMarginRight = isMobile() ? true : await getHideMarginRight();
 });
 </script>
 
@@ -80,7 +82,7 @@ onMounted(async () => {
 
 #main-wrapper {
   position: absolute;
-  top: 0;
+  top: env(safe-area-inset-top, 0);
   left: 0;
   right: 0;
   bottom: 0;
@@ -118,7 +120,7 @@ onMounted(async () => {
   bottom: 0;
 }
 
-@media screen and (max-width: 400px) {
+@media screen and (max-width: 600px) {
   #chat-lists-container {
     width: 100%;
   }

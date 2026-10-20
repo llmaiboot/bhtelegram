@@ -3,8 +3,8 @@ use pgp::types::KeyDetails;
 use std::thread;
 
 #[tauri::command]
-pub fn get_default_folder() -> String {
-    settings::get_default_folder()
+pub fn get_default_folder<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> String {
+    settings::get_default_folder(&app)
 }
 
 #[tauri::command]

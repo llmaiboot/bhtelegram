@@ -1,3 +1,5 @@
+import { getCurrentWindow } from '@tauri-apps/api/window';
+import { isMobile } from '../services/platform';
 import { Theme } from '@tauri-apps/api/window';
 import { LazyStore } from '@tauri-apps/plugin-store';
 
@@ -41,4 +43,24 @@ export async function getImageViewer(): Promise<'system' | 'app'> {
 export async function setImageViewer(viewer: 'system' | 'app'): Promise<void> {
     await store.set('image-viewer', viewer);
     await store.save();
+}
+
+/**
+ * Applies the theme. Desktop: native window theme (also drives
+ * prefers-color-scheme). Phones have no window theme API, so the Bulma
+ * data-theme attribute is used there and on desktop as well.
+ */
+export async function applyTheme(theme: Theme | undefined | null): Promise<void> {
+  if (theme) {
+    document.documentElement.setAttribute('data-theme', theme);
+  } else {
+    document.documentElement.removeAttribute('data-theme');
+  }
+  if (!isMobile()) {
+    try {
+      await getCurrentWindow().setTheme(theme ?? null);
+    } catch (err) {
+      console.warn(err);
+    }
+  }
 }

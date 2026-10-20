@@ -494,7 +494,7 @@ watch(() => store.selectedChat?.id, () => clear());
   display: none;
 }
 
-@media screen and (max-width: 400px) {
+@media screen and (max-width: 600px) {
   #close-chat-button-wrapper {
     display: block;
   }

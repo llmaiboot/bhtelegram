@@ -14,7 +14,18 @@ pub fn get_default_bhtelegram_folder() -> Option<PathBuf> {
     }
 }
 
-pub fn get_default_folder() -> String {
+pub fn get_default_folder<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> String {
+    // On phones there is no usable home directory: keep data in the
+    // app-private storage (/data/data/<id>/files on Android, sandbox on iOS).
+    #[cfg(mobile)]
+    {
+        use tauri::Manager;
+        if let Ok(dir) = app.path().app_data_dir() {
+            return dir.join("bhtelegram").to_string_lossy().into_owned();
+        }
+    }
+    #[cfg(desktop)]
+    let _ = app;
     get_default_bhtelegram_folder()
         .map(|path| path.to_string_lossy().into_owned())
         .unwrap_or_else(|| String::new())

@@ -1,3 +1,4 @@
+import { isMobile } from './platform';
 import { listen } from '@tauri-apps/api/event'
 import { Window } from "@tauri-apps/api/window"
 import { store } from '../store'
@@ -50,6 +51,9 @@ export async function handleChatsUpdates() {
     }),
     await listen<number>('update-unread-chat-count', async (event) => {
       const count = event.payload;
+      if (isMobile()) {
+        return; // no window title on phones
+      }
       const mainWindow = new Window('main');
       await mainWindow.setTitle(count > 0 ? '★ BhTelegram' : 'BhTelegram');
     }),

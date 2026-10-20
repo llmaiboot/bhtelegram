@@ -12,6 +12,8 @@
 * Fix: replacing or removing a chat key now invalidates the cached key
 * Fix: database encryption key and api_hash are no longer printed in debug logs
 * Test guarding crypto/telegram layer isolation
+* Android build (Tauri mobile): TDLib build script, app-private data folder, mobile-safe UI paths, data-theme dark mode
+* Login: shows where the code was sent, resend by SMS/call, QR login
 
 ## 0.4.1
 

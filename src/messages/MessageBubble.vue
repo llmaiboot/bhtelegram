@@ -236,4 +236,23 @@ onMounted(async () => {
     filter: drop-shadow(0 0 3px #eee);
   }
 }
+
+
+[data-theme=dark] .is-encrypted {
+  border: 2px rgb(23, 220, 255) dashed;
+}
+
+[data-theme=dark] .is-encrypted.unread {
+  border: 2px rgb(223, 188, 255) dashed;
+}
+
+[data-theme=dark] .unread {
+  border: 2px rgb(223, 188, 255) solid;
+}
+
+[data-theme=dark] .my-reaction:hover {
+  -webkit-filter: drop-shadow(0 0 3px #eee);
+  filter: drop-shadow(0 0 3px #eee);
+}
+
 </style>

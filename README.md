@@ -129,6 +129,27 @@ The application stores its data in a folder that can be configured during the fi
 
 Preferences are stored in `~/.local/share/com.llmaiboot.bhtelegram`.
 
+## Android
+
+BhTelegram also builds for Android (Tauri 2 mobile). Tested on an x86_64 emulator (Android 14).
+
+1. Build TDLib for Android once (~30 min, arm64-v8a + x86_64):
+   ```bash
+   git clone https://github.com/tdlib/td.git ~/projects/td && git -C ~/projects/td checkout a9966eb3704a3351568c28013fed67d797c17828
+   ./scripts/build-tdlib-android.sh ~/projects/td ~/projects/bhtelegram-deps/android
+   ```
+2. Requirements: Android SDK + NDK 29 (`$ANDROID_HOME`, `$NDK_HOME`), JDK 21, rustup with
+   `aarch64-linux-android` and `x86_64-linux-android` targets. `tdlib-rs` must contain the
+   `TDJSON_LIB_DIR` support in `tdlib/build.rs` (mobile targets skip pkg-config).
+3. Build:
+   ```bash
+   export TDJSON_LIB_DIR=~/projects/bhtelegram-deps/android
+   npx tauri android build --apk --target aarch64 --target x86_64
+   ```
+   Release signing reads `src-tauri/gen/android/keystore.properties` (`storeFile`, `keyAlias`, `password`); the file is git-ignored.
+
+On phones the data folder is the app-private storage, extra photo windows, window titles and drag & drop are disabled.
+
 ## Developing
 
 Build tdlib using following instructions: https://tdlib.github.io/td/build.html?language=C
