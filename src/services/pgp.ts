@@ -41,12 +41,25 @@ export async function removeChatKey(chatId: number): Promise<void> {
   await invoke('remove_chat_key', { chatId });
 }
 
-export async function decryptFile(path: string): Promise<string> {
-  return await invoke<string>('decrypt_file', { path });
+export async function decryptFile(chatId: number, path: string): Promise<string> {
+  return await invoke<string>('decrypt_file', { chatId, path });
 }
 
-export async function decryptPgpTextMessage(documentId: number): Promise<string> {
-  return await invoke<string>('decrypt_pgp_text_message', { documentId });
+export async function decryptPgpTextMessage(chatId: number, documentId: number): Promise<string> {
+  return await invoke<string>('decrypt_pgp_text_message', { chatId, documentId });
+}
+
+export async function setChatRevealed(chatId: number, revealed: boolean): Promise<void> {
+  await invoke('set_chat_revealed', { chatId, revealed });
+}
+
+export async function isChatRevealed(chatId: number): Promise<boolean> {
+  return await invoke<boolean>('is_chat_revealed', { chatId });
+}
+
+/** Hides decrypted content of every chat and wipes decrypted files from disk. */
+export async function hideAllChats(): Promise<number> {
+  return await invoke<number>('hide_all_chats');
 }
 
 export async function decryptPgpFileMessage(documentId: number): Promise<string> {

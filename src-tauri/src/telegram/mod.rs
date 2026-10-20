@@ -4,3 +4,4 @@ mod folders;
 mod messages;
 mod users;
 mod effects;
+pub mod privacy;

@@ -89,6 +89,7 @@ pub fn save_chat_key<R: tauri::Runtime>(
     let target_key_file =
         crypto::pgp::get_chat_key_path(&app, chat_id).map_err(|e| e.to_string())?;
     fs::copy(key_file, target_key_file).map_err(|e| e.to_string())?;
+    state::invalidate_chat_encryption_key(&app, chat_id);
     store::set_chat_config(
         &app,
         ChatConfig {
@@ -105,6 +106,7 @@ pub fn remove_chat_key<R: tauri::Runtime>(
     chat_id: i64,
 ) -> Result<(), String> {
     store::remove_chat_config(&app, chat_id);
+    state::invalidate_chat_encryption_key(&app, chat_id);
     Ok(())
 }
 
@@ -114,11 +116,21 @@ pub fn get_chat_key<R: tauri::Runtime>(app: tauri::AppHandle<R>, chat_id: i64) -
     config.map(|c| c.key)
 }
 
+fn ensure_revealed<R: tauri::Runtime>(app: &tauri::AppHandle<R>, chat_id: i64) -> Result<(), String> {
+    if state::is_chat_revealed(app, chat_id) {
+        Ok(())
+    } else {
+        Err("Encrypted content of this chat is hidden".into())
+    }
+}
+
 #[tauri::command]
 pub fn decrypt_file<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
+    chat_id: i64,
     path: &str,
 ) -> Result<String, String> {
+    ensure_revealed(&app, chat_id)?;
     let target_path = crypto::pgp::decrypt_file_to_file(&app, path).map_err(|e| e.to_string())?;
     Ok(target_path)
 }
@@ -126,8 +138,10 @@ pub fn decrypt_file<R: tauri::Runtime>(
 #[tauri::command]
 pub async fn decrypt_pgp_text_message<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
+    chat_id: i64,
     document_id: i32,
 ) -> Result<String, String> {
+    ensure_revealed(&app, chat_id)?;
     match tdlib::functions::download_file(document_id, 1, 0, 0, true, state::get_client_id(&app))
         .await
     {
@@ -182,4 +196,20 @@ pub async fn change_passphrase<R: tauri::Runtime>(
     store::set_secret_key(&app, &new_sec_key_armored);
     state::set_pgp_passphrase(&app, &new_passphrase);
     Ok(())
+}
+
+#[tauri::command]
+pub fn set_chat_revealed<R: tauri::Runtime>(app: tauri::AppHandle<R>, chat_id: i64, revealed: bool) {
+    state::set_chat_revealed(&app, chat_id, revealed);
+}
+
+#[tauri::command]
+pub fn is_chat_revealed<R: tauri::Runtime>(app: tauri::AppHandle<R>, chat_id: i64) -> bool {
+    state::is_chat_revealed(&app, chat_id)
+}
+
+#[tauri::command]
+pub fn hide_all_chats<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<usize, String> {
+    state::hide_all_chats(&app);
+    crypto::plaintext::wipe_plaintext_files(&app).map_err(|e| e.to_string())
 }

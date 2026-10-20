@@ -39,7 +39,7 @@ async function decrypt(path: string) {
   }
   loading.value = true;
   try {
-    plaintextPath.value = await decryptFile(path);
+    plaintextPath.value = await decryptFile(props.message.chat_id, path);
   } catch (err) {
     console.error(err);
     decryptionError.value = true;

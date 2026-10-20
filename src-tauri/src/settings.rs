@@ -62,12 +62,51 @@ pub fn save_initial_config<R: tauri::Runtime>(
     Ok(())
 }
 
-#[derive(Debug)]
 pub struct TdlibParameters {
     pub database_directory: String,
     pub api_id: i32,
     pub api_hash: String,
     pub database_encryption_key: String,
+}
+
+// Secrets (api_hash, the derived database key) must never reach the logs:
+// RUST_LOG=debug used to print the database encryption key in plaintext.
+impl std::fmt::Debug for TdlibParameters {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TdlibParameters")
+            .field("database_directory", &self.database_directory)
+            .field("api_id", &self.api_id)
+            .field("api_hash", &"<redacted>")
+            .field(
+                "database_encryption_key",
+                &if self.database_encryption_key.is_empty() {
+                    "<none>"
+                } else {
+                    "<redacted>"
+                },
+            )
+            .finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tdlib_parameters_debug_hides_secrets() {
+        let params = TdlibParameters {
+            database_directory: "/tmp/db".into(),
+            api_id: 42,
+            api_hash: "super-secret-hash".into(),
+            database_encryption_key: "deadbeefcafebabe".into(),
+        };
+        let out = format!("{:?}", params);
+        assert!(!out.contains("super-secret-hash"));
+        assert!(!out.contains("deadbeefcafebabe"));
+        assert!(out.contains("/tmp/db"));
+        assert!(out.contains("<redacted>"));
+    }
 }
 
 pub fn get_tdlib_parameters<R: tauri::Runtime>(

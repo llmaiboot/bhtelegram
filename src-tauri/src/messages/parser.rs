@@ -5,7 +5,7 @@ use crate::{
         self, pgp::{get_key_file_complete_info, get_plaintext_path},
     }, files::{allow_opening_file, is_file_accessible}, model::{
         File, ForwardedFrom, Message, MessageAnimatedEmoji, MessageContent, MessageDocument,
-        MessageError, MessagePgpFile, MessagePgpKey, MessagePgpText, MessagePhoto, MessageReaction,
+        MessageError, MessagePgpFile, MessagePgpHidden, MessagePgpKey, MessagePgpText, MessagePhoto, MessageReaction,
         MessageSendingState, MessageText, MessageVoiceNote, PhotoSize, PublicKeyCompleteInfo,
     }, state, store,
 };
@@ -87,6 +87,13 @@ fn parse_content<R: tauri::Runtime>(
                 store::get_chat_config(app, message.chat_id).map(|c| c.key) != None;
             // "ombra-chat-" is kept for compatibility with upstream OmbraChat clients
             if file_name.starts_with("bhtelegram-") || file_name.starts_with("ombra-chat-") {
+                if has_encryption && !state::is_chat_revealed(app, message.chat_id) {
+                    if file_name.ends_with(".pgp") {
+                        return MessageContent::PgpHidden(MessagePgpHidden {
+                            is_file: !file_name.ends_with(".txt.pgp"),
+                        });
+                    }
+                }
                 if has_encryption {
                     if file_name.ends_with(".txt.pgp") {
                         return parse_pgp_text_message(app, content);

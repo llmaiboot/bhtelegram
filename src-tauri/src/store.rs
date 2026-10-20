@@ -10,6 +10,9 @@ static ENCRYPTED_DATABASE_PASSWORD: &str = "encrypted-database-password";
 static ENCRYPTION_SALT: &str = "encryption-salt";
 static INITIAL_CONFIG_DONE: &str = "initial-config-done";
 static CHATS: &str = "chats";
+static SEND_READ_RECEIPTS: &str = "send-read-receipts";
+static SHOW_ONLINE: &str = "show-online";
+static AUTO_DECRYPT: &str = "auto-decrypt";
 
 fn get_string<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
@@ -126,6 +129,43 @@ pub fn get_encryption_salt<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Stri
 
 pub fn set_encryption_salt<R: tauri::Runtime>(app: &tauri::AppHandle<R>, encryption_salt: &str) {
     set_value(app, ENCRYPTION_SALT, encryption_salt)
+}
+
+// Privacy settings. All of them default to the most private behaviour
+// (missing key == false): no read receipts, no "online" status and no
+// automatic decryption of PGP content.
+
+pub fn get_send_read_receipts<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> bool {
+    get_bool(app, SEND_READ_RECEIPTS)
+}
+
+pub fn get_show_online<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> bool {
+    get_bool(app, SHOW_ONLINE)
+}
+
+pub fn get_auto_decrypt<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> bool {
+    get_bool(app, AUTO_DECRYPT)
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+pub struct PrivacySettings {
+    pub send_read_receipts: bool,
+    pub show_online: bool,
+    pub auto_decrypt: bool,
+}
+
+pub fn get_privacy_settings<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> PrivacySettings {
+    PrivacySettings {
+        send_read_receipts: get_send_read_receipts(app),
+        show_online: get_show_online(app),
+        auto_decrypt: get_auto_decrypt(app),
+    }
+}
+
+pub fn set_privacy_settings<R: tauri::Runtime>(app: &tauri::AppHandle<R>, s: &PrivacySettings) {
+    set_value(app, SEND_READ_RECEIPTS, s.send_read_receipts);
+    set_value(app, SHOW_ONLINE, s.show_online);
+    set_value(app, AUTO_DECRYPT, s.auto_decrypt);
 }
 
 pub fn set_initial_config_done<R: tauri::Runtime>(app: &tauri::AppHandle<R>, done: bool) {

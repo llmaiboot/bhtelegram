@@ -95,6 +95,7 @@ impl Client {
                 }
                 AuthorizationState::Ready => {
                     state::set_logged_in(app, true);
+                    super::privacy::apply_online_status(app).await;
                     emit(app, "logged-in", ());
                 }
                 AuthorizationState::LoggingOut | AuthorizationState::Closing => {

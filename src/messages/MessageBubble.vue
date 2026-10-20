@@ -6,6 +6,7 @@ import PgpTextMessage from './PgpTextMessage.vue';
 import PgpDocumentMessage from './PgpDocumentMessage.vue';
 import PgpKeyMessage from './PgpKeyMessage.vue';
 import NotSupportedMessage from './NotSupportedMessage.vue';
+import PgpHiddenMessage from './PgpHiddenMessage.vue';
 import { FontAwesomeIcon } from '@fortawesome/vue-fontawesome';
 import { faGear, faCheck, faCheckDouble } from '@fortawesome/free-solid-svg-icons';
 import { store } from '../store';
@@ -29,7 +30,8 @@ const isEncryptedMessage = computed(() => {
     return false;
   }
   const { content } = props.message;
-  return content['@type'] === 'messagePgpText' || content['@type'] === 'messagePgpFile';
+  return content['@type'] === 'messagePgpText' || content['@type'] === 'messagePgpFile'
+    || content['@type'] === 'messagePgpHidden';
 });
 
 const senderTitle = computed(() => getSenderTitle(props.message));
@@ -124,6 +126,8 @@ onMounted(async () => {
       <PgpTextMessage v-if="message.content['@type'] === 'messagePgpText'" :message="message"
         :content="message.content" />
       <PgpDocumentMessage v-else-if="message.content['@type'] === 'messagePgpFile'" :message="message"
+        :content="message.content" />
+      <PgpHiddenMessage v-else-if="message.content['@type'] === 'messagePgpHidden'" :message="message"
         :content="message.content" />
       <PgpKeyMessage v-else-if="message.content['@type'] === 'messagePgpKey'" :message="message"
         :content="message.content" />

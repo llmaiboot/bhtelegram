@@ -17,7 +17,7 @@ watch(
   async (newContent) => {
     if (newContent.text === null) {
       try {
-        textContent.value = await decryptPgpTextMessage(newContent.document_id);
+        textContent.value = await decryptPgpTextMessage(props.message.chat_id, newContent.document_id);
       } catch {
         decryptionError.value = true;
       }

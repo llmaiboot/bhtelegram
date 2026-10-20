@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed, nextTick, onDeactivated, onMounted, ref, watch } from 'vue';
 import MessageBubble from './messages/MessageBubble.vue';
-import { getSenderTitle, loadNewMessages, loadPreviousMessages, sendMessage, closeCurrentChat } from './services/chats';
+import { getSenderTitle, loadNewMessages, loadPreviousMessages, sendMessage, closeCurrentChat, selectChat } from './services/chats';
 import { store } from './store';
 import { open } from '@tauri-apps/plugin-dialog';
 import { listen, UnlistenFn } from '@tauri-apps/api/event'
 import { InputMessageContent, InputMessageDocument, InputMessagePhoto, InputMessageReplyTo } from './model';
 import { FontAwesomeIcon } from '@fortawesome/vue-fontawesome';
-import { faPaperPlane, faGear, faPaperclip, faX, faKey, faLock, faChevronLeft } from '@fortawesome/free-solid-svg-icons';
+import { faPaperPlane, faGear, faPaperclip, faX, faKey, faLock, faChevronLeft, faEye, faEyeSlash } from '@fortawesome/free-solid-svg-icons';
+import { setChatRevealed } from './services/pgp';
 import { getFileName } from './services/files';
 import ChatSettingsModal from './ChatSettingsModal.vue';
 import MessageModal from './MessageModal.vue';
@@ -15,6 +16,18 @@ import ChatKeyModal from './ChatKeyModal.vue';
 import UserModal from './UserModal.vue';
 
 type SelectedFile = { path: string; image: boolean; }
+
+// Secret view: PGP content is decrypted only after an explicit click and
+// only for this chat; hiding it again reloads the history as ciphertext.
+async function toggleReveal() {
+  const chat = store.selectedChat;
+  if (!chat) {
+    return;
+  }
+  const revealed = !store.selectedChatRevealed;
+  await setChatRevealed(chat.id, revealed);
+  await selectChat(chat.id, true);
+}
 
 const newMessageText = ref('');
 const selectedFiles = ref([] as SelectedFile[]);
@@ -330,6 +343,12 @@ watch(() => store.selectedChat?.id, () => clear());
         </button>
       </div>
       <div id="chat-settings-btn-wrapper">
+        <button type="button" v-if="store.selectedChatKey !== ''" class="button ml-2"
+          :class="{ 'is-warning': store.selectedChatRevealed }" @click="toggleReveal"
+          :title="store.selectedChatRevealed ? 'Hide encrypted messages' : 'Show encrypted messages'"
+          :aria-label="store.selectedChatRevealed ? 'Hide encrypted messages' : 'Show encrypted messages'">
+          <FontAwesomeIcon :icon="store.selectedChatRevealed ? faEyeSlash : faEye" />
+        </button>
         <button type="button" class="button mx-2" @click="store.toggleChatSettingsModal" aria-label="Settings">
           <FontAwesomeIcon :icon="faGear" />
         </button>

@@ -6,7 +6,10 @@ import { getDefaultChatFolder, getHideMarginRight, getImageViewer, setDefaultCha
 import { changeKeyPassphrase, exportPublicKey, exportSecretKey, getMyKeyFingerprint } from './services/pgp';
 import { save } from '@tauri-apps/plugin-dialog';
 import { getCurrentWindow, Theme } from '@tauri-apps/api/window';
-import { PublicKeyFingerprints } from './model';
+import { PrivacySettings, PublicKeyFingerprints } from './model';
+import { invoke } from '@tauri-apps/api/core';
+import { hideAllChats } from './services/pgp';
+import { selectChat } from './services/chats';
 import { FontAwesomeIcon } from '@fortawesome/vue-fontawesome';
 import { faLock, faKey } from '@fortawesome/free-solid-svg-icons';
 
@@ -23,6 +26,16 @@ const theme = ref<Theme>('light');
 const keyError = ref('');
 const imageViewer = ref<'system' | 'app'>('system');
 const hideMarginRight = ref<boolean>(false);
+const privacy = ref<PrivacySettings>({ send_read_receipts: false, show_online: false, auto_decrypt: false });
+const wipeResult = ref('');
+
+async function hideEverything() {
+  const removed = await hideAllChats();
+  wipeResult.value = `Encrypted content hidden, ${removed} decrypted file(s) removed from disk`;
+  if (store.selectedChat) {
+    await selectChat(store.selectedChat.id, true);
+  }
+}
 
 function closeModal() {
   store.toggleSettingsModal();
@@ -44,6 +57,8 @@ onMounted(async () => {
   theme.value = await getCurrentWindow().theme() || 'light';
   imageViewer.value = await getImageViewer();
   hideMarginRight.value = await getHideMarginRight();
+  privacy.value = await invoke<PrivacySettings>('get_privacy_settings');
+  wipeResult.value = '';
 });
 
 async function saveSettings() {
@@ -52,6 +67,10 @@ async function saveSettings() {
   await setImageViewer(imageViewer.value);
   await setHideMarginRight(hideMarginRight.value);
   store.hideMarginRight = hideMarginRight.value;
+  await invoke('set_privacy_settings', { settings: privacy.value });
+  if (store.selectedChat) {
+    await selectChat(store.selectedChat.id, true);
+  }
   closeModal();
 }
 
@@ -114,6 +133,29 @@ watch(
         <p class="menu-label">Default chat folder</p>
         <Dropdown :values="store.chatFolders.map(f => ({ id: f.id, label: f.name }))" :default-value="selectedId"
           @change="selectFolder" />
+
+        <p class="menu-label mt-4">Privacy</p>
+        <div class="field">
+          <label class="checkbox">
+            <input type="checkbox" v-model="privacy.send_read_receipts" />
+            Send read receipts
+          </label>
+        </div>
+        <div class="field">
+          <label class="checkbox">
+            <input type="checkbox" v-model="privacy.show_online" />
+            Show me as "online"
+          </label>
+        </div>
+        <div class="field">
+          <label class="checkbox">
+            <input type="checkbox" v-model="privacy.auto_decrypt" />
+            Decrypt PGP messages automatically
+          </label>
+          <p class="help">When disabled, encrypted messages stay hidden until you press the eye button in a chat.</p>
+        </div>
+        <button class="button is-warning" type="button" @click="hideEverything">Hide all encrypted content now</button>
+        <p class="help" v-if="wipeResult">{{ wipeResult }}</p>
 
         <p class="menu-label mt-4">PGP Key</p>
         <div v-if="myKeyFingerprint" class="mb-2">

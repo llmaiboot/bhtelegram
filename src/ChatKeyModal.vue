@@ -4,11 +4,18 @@ import { store } from './store';
 import { SecretChat } from './model';
 import { FontAwesomeIcon } from '@fortawesome/vue-fontawesome';
 import { faUser, faKey, faWarning } from '@fortawesome/free-solid-svg-icons';
-import { getChatKeyCompleteInfo } from './services/pgp';
+import { getChatKeyCompleteInfo, getMyKeyFingerprint } from './services/pgp';
+import { PublicKeyFingerprints } from './model';
 
 let pgpIdKeyFingerprint = ref('');
 let pgpEncryptionKeyFingerprint = ref('');
 let pgpKeyArmored = ref('');
+const myKey = ref<PublicKeyFingerprints | null>(null);
+
+// Groups a fingerprint in blocks of 4 so it can be compared aloud.
+function formatFingerprint(fp: string): string {
+  return fp.toUpperCase().replace(/(.{4})(?=.)/g, '$1 ');
+}
 
 function closeModal() {
   store.toggleChatKeyModal();
@@ -38,6 +45,11 @@ watch(() => store.selectedChatKey, async () => {
     pgpIdKeyFingerprint.value = info.id_key_fingerprint;
     pgpEncryptionKeyFingerprint.value = info.encryption_key_fingerprint;
     pgpKeyArmored.value = info.armored_data;
+    try {
+      myKey.value = await getMyKeyFingerprint();
+    } catch {
+      myKey.value = null;
+    }
   } else {
     pgpIdKeyFingerprint.value = '';
     pgpEncryptionKeyFingerprint.value = '';
@@ -70,6 +82,15 @@ watch(() => store.selectedChatKey, async () => {
               <code>{{ pgpEncryptionKeyFingerprint.toUpperCase() }}</code>
             </div>
             <div class="is-size-7 is-italic">encryption</div>
+          </div>
+          <div class="box mt-4" id="fingerprint-check">
+            <p class="has-text-weight-bold mb-2">Verify fingerprints</p>
+            <p class="is-size-7 mb-1">Your key (your peer must see this one for you):</p>
+            <code class="is-block mb-3">{{ myKey ? formatFingerprint(myKey.primary) : '—' }}</code>
+            <p class="is-size-7 mb-1">Peer key stored for this chat:</p>
+            <code class="is-block">{{ formatFingerprint(pgpIdKeyFingerprint) }}</code>
+            <p class="is-size-7 mt-2">Compare both values with your peer over a different channel (call, in person).
+              If they differ, someone may be intercepting the conversation.</p>
           </div>
           <div class="mt-4 mb-5">
             <pre>{{ pgpKeyArmored }}</pre>

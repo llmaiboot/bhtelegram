@@ -5,6 +5,13 @@
 * Forked from OmbraChat 0.4.1 and rebranded to BhTelegram
 * Data folder changed to `~/.bhtelegram`, app id `com.llmaiboot.bhtelegram`
 * PGP attachments are now named `bhtelegram-*`; `ombra-chat-*` ones are still recognized
+* Privacy settings: read receipts and "online" status are off by default
+* Secret view: PGP content is decrypted only on explicit reveal per chat (auto-decrypt optional)
+* Decrypted attachments are wiped on startup, exit and on demand
+* Side-by-side fingerprint verification in the chat keys dialog
+* Fix: replacing or removing a chat key now invalidates the cached key
+* Fix: database encryption key and api_hash are no longer printed in debug logs
+* Test guarding crypto/telegram layer isolation
 
 ## 0.4.1
 

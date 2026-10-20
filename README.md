@@ -35,6 +35,34 @@ Currently it has been tested only on Linux, but it could work also on other OS.
 
 Fork source code: [GitHub](https://github.com/llmaiboot/bhtelegram). Upstream: [GitHub](https://github.com/ombra-chat/ombra-chat) / [Codeberg](https://codeberg.org/zonia3000/ombra-chat).
 
+## BhTelegram privacy defaults
+
+Ideas adopted from [zkgram](https://github.com/Gerate-Technik/zkgram), adapted to the PGP model of this client:
+
+| Feature | Default | Where |
+|---|---|---|
+| Read receipts are not sent to Telegram | on | Settings → Privacy |
+| "Online" status is not reported | on | Settings → Privacy |
+| Secret view: PGP messages are decrypted only after pressing the eye button in a chat, never automatically; hidden content carries no plaintext, not even file names | on | Chat header / Settings → Privacy |
+| Decrypted attachments are wiped from disk on startup, on exit and on "Hide all encrypted content now" | always | — |
+| Fingerprint check: your key and the peer key are shown side by side, grouped by 4 characters, to be compared over another channel | always | Chat keys dialog |
+| Secrets (`api_hash`, database key) are redacted from logs | always | — |
+
+### Layer isolation
+
+`src-tauri/src/crypto` (keys, plaintext) never imports TDLib or `telegram`, and `src-tauri/src/telegram` (transport) never imports `crypto`/`pgp`. Only `commands` and `messages` connect them. This is enforced by `src-tauri/tests/layers.rs`.
+
+### What BhTelegram does not protect against
+
+| Not protected | Why |
+|---|---|
+| Metadata | Telegram still sees who talks to whom and when; only message content is hidden. |
+| "Last seen" when you send | The online flag is kept off, but Telegram can still update your last-seen time when you actively send messages. |
+| A compromised device | Malware running while the passphrase is entered or content is revealed can read it. |
+| Skipped fingerprint check | Without comparing fingerprints out of band, a swapped key (MITM) goes unnoticed. |
+| Past messages after a key leak | PGP has no forward secrecy: a leaked private key decrypts all previous messages. |
+| SSD/CoW remnants | Wiped files are overwritten before deletion, but SSDs and copy-on-write filesystems may keep old blocks. |
+
 ## Implemented features
 
 * Text messages

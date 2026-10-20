@@ -103,6 +103,11 @@ export type MessagePgpFile = {
   caption: string | null;
 }
 
+export type MessagePgpHidden = {
+  '@type': 'messagePgpHidden';
+  is_file: boolean;
+}
+
 export type MessagePgpKey = {
   '@type': 'messagePgpKey';
   document_id: number;
@@ -110,7 +115,7 @@ export type MessagePgpKey = {
   key_info: PublicKeyCompleteInfo | null;
 }
 
-export type MessageContent = MessageText | MessagePhoto | MessageDocument | MessageAnimatedEmoji | MessageVoiceNote | MessagePgpText | MessagePgpFile | MessagePgpKey;
+export type MessageContent = MessageText | MessagePhoto | MessageDocument | MessageAnimatedEmoji | MessageVoiceNote | MessagePgpText | MessagePgpFile | MessagePgpKey | MessagePgpHidden;
 
 export type Message = {
   id: number;
@@ -227,4 +232,10 @@ export type PublicKeyCompleteInfo = {
   id_key_fingerprint: string;
   encryption_key_fingerprint: string;
   armored_data: string;
+}
+
+export type PrivacySettings = {
+  send_read_receipts: boolean;
+  show_online: boolean;
+  auto_decrypt: boolean;
 }

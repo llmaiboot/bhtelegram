@@ -3,7 +3,7 @@ import { Window } from "@tauri-apps/api/window"
 import { store } from '../store'
 import { Chat, ChatPosition, InputMessageContent, InputMessageReplyTo, Message, MessageContent, SecretChat, UpdateChatReadInbox, UpdateDeleteMessages, File, UpdateMessageReactions, UpdateMessageSendSucceeded } from '../model';
 import { invoke } from '@tauri-apps/api/core';
-import { getChatKey } from './pgp';
+import { getChatKey, isChatRevealed } from './pgp';
 
 export async function handleChatsUpdates() {
   return [
@@ -94,6 +94,7 @@ export async function selectChat(id: number, reload: boolean = false) {
       return;
     }
     store.selectedChatKey = await getChatKey(id);
+    store.selectedChatRevealed = await isChatRevealed(id);
     store.loadingNewMessages = true;
     const messages = await invoke<Message[]>('open_chat', {
       chatId: id,

@@ -1,5 +1,9 @@
 use pgp::{composed::SignedSecretKey, packet::PublicSubkey};
-use std::{collections::HashMap, error::Error, sync::Mutex};
+use std::{
+    collections::{HashMap, HashSet},
+    error::Error,
+    sync::Mutex,
+};
 use tauri::Manager;
 
 use crate::crypto;
@@ -13,6 +17,9 @@ pub struct AppState {
     client_id: i32,
     logged_in: bool,
     close_requested: bool,
+    /// Chats whose PGP content the user explicitly revealed in this session
+    /// (see `is_chat_revealed`). Never persisted.
+    revealed_chats: HashSet<i64>,
 }
 
 impl AppState {
@@ -25,6 +32,7 @@ impl AppState {
             client_id: 0,
             logged_in: false,
             close_requested: false,
+            revealed_chats: HashSet::new(),
         }
     }
 }
@@ -137,4 +145,43 @@ pub fn get_chat_encryption_key<R: tauri::Runtime>(
             return Ok(encryption_key);
         }
     }
+}
+
+/// Drops the cached encryption key of a chat, so that a replaced or removed
+/// peer key is never used again for new messages.
+pub fn invalidate_chat_encryption_key<R: tauri::Runtime>(app: &tauri::AppHandle<R>, chat_id: i64) {
+    let state = app.state::<Mutex<AppState>>();
+    let mut state = state.lock().unwrap();
+    state.keys_cache.remove(&chat_id);
+}
+
+/// PGP content of a chat is decrypted only when it has been revealed
+/// explicitly, unless the user enabled automatic decryption.
+pub fn is_chat_revealed<R: tauri::Runtime>(app: &tauri::AppHandle<R>, chat_id: i64) -> bool {
+    if crate::store::get_auto_decrypt(app) {
+        return true;
+    }
+    let state = app.state::<Mutex<AppState>>();
+    let state = state.lock().unwrap();
+    state.revealed_chats.contains(&chat_id)
+}
+
+pub fn set_chat_revealed<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    chat_id: i64,
+    revealed: bool,
+) {
+    let state = app.state::<Mutex<AppState>>();
+    let mut state = state.lock().unwrap();
+    if revealed {
+        state.revealed_chats.insert(chat_id);
+    } else {
+        state.revealed_chats.remove(&chat_id);
+    }
+}
+
+pub fn hide_all_chats<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    let state = app.state::<Mutex<AppState>>();
+    let mut state = state.lock().unwrap();
+    state.revealed_chats.clear();
 }

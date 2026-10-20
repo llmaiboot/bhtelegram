@@ -67,16 +67,28 @@ pub fn run() {
             commands::pgp::decrypt_pgp_text_message,
             commands::pgp::download_pgp_key_file,
             commands::pgp::change_passphrase,
+            commands::pgp::set_chat_revealed,
+            commands::pgp::is_chat_revealed,
+            commands::pgp::hide_all_chats,
+            commands::privacy::get_privacy_settings,
+            commands::privacy::set_privacy_settings,
         ])
         .setup(|app| {
             app.manage(Mutex::new(state::AppState::new()));
             set_allowed_files_paths(app.handle()).unwrap();
+            // Leftovers of a previous session that did not exit cleanly.
+            if let Err(e) = crypto::plaintext::wipe_plaintext_files(app.handle()) {
+                log::warn!("Unable to wipe decrypted files: {}", e);
+            }
             Ok(())
         })
         .on_window_event(|window, event| match event {
             tauri::WindowEvent::CloseRequested { api, .. } => {
                 log::trace!("CloseRequested {}", window.label());
                 if window.label() == "main" {
+                    if let Err(e) = crypto::plaintext::wipe_plaintext_files(window.app_handle()) {
+                        log::warn!("Unable to wipe decrypted files: {}", e);
+                    }
                     let client_id = state::get_client_id(window.app_handle());
                     if client_id != 0 {
                         state::request_close(window.app_handle());

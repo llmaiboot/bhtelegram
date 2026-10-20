@@ -389,6 +389,8 @@ pub enum MessageContent {
     PgpFile(MessagePgpFile),
     #[serde(rename(serialize = "messagePgpKey", deserialize = "messagePgpKey"))]
     PgpKey(MessagePgpKey),
+    #[serde(rename(serialize = "messagePgpHidden", deserialize = "messagePgpHidden"))]
+    PgpHidden(MessagePgpHidden),
     #[serde(rename(serialize = "messageError", deserialize = "messageError"))]
     Error(MessageError),
     #[serde(rename(serialize = "messageUnsupported", deserialize = "messageUnsupported"))]
@@ -449,6 +451,13 @@ pub struct MessagePgpKey {
     pub document_id: i32,
     pub path: Option<String>,
     pub key_info: Option<PublicKeyCompleteInfo>,
+}
+
+/// PGP message that has not been decrypted because the chat is not revealed.
+/// Contains no plaintext at all, not even the file name.
+#[derive(serde::Serialize, Clone)]
+pub struct MessagePgpHidden {
+    pub is_file: bool,
 }
 
 #[derive(serde::Serialize, Clone)]

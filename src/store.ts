@@ -21,6 +21,8 @@ type Store = {
   selectedChatFolderId: number;
   selectedChat: Chat | null;
   selectedChatKey: string;
+  // Decrypted PGP content of the selected chat is visible (secret view)
+  selectedChatRevealed: boolean;
   loadingNewMessages: boolean;
   messagesToLoad: number[];
   messagesBubblesToLoad: number[];
@@ -133,6 +135,7 @@ export const store = reactive<Store>({
     }
   },
   selectedChatKey: '',
+  selectedChatRevealed: false,
   loadingNewMessages: false,
   messagesToLoad: [],
   messagesBubblesToLoad: [],

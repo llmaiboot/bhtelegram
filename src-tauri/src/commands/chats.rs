@@ -4,7 +4,7 @@ use crate::{
         parser::parse_message,
     },
     model::{Chat, InputMessageContent, InputMessageReplyTo, Message},
-    state,
+    state, store,
 };
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 
@@ -211,6 +211,11 @@ pub async fn view_message<R: tauri::Runtime>(
     chat_id: i64,
     message_id: i64,
 ) -> Result<(), String> {
+    // Privacy: by default the client never tells Telegram that a message was
+    // read (no read receipts). Enabled only through the privacy settings.
+    if !store::get_send_read_receipts(&app) {
+        return Ok(());
+    }
     tdlib::functions::view_messages(
         chat_id,
         vec![message_id],
