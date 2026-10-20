@@ -14,7 +14,8 @@ import { getTheme, isInitialConfigDone } from "./settings/settings";
 import InitialConfiguration from "./settings/InitialConfiguration.vue";
 import EncryptionPassword from './EncryptionPassword.vue';
 import PhoneNumber from './login/PhoneNumber.vue';
-import AuthenticationCode from './login/AuthenticationCode.vue';
+import AuthenticationCode, { type LoginCodeInfo } from './login/AuthenticationCode.vue';
+import QrLogin from './login/QrLogin.vue';
 import AuthenticationPassword from './login/AuthenticationPassword.vue';
 import Main from './Main.vue';
 import { handleChatsUpdates } from './services/chats';
@@ -31,11 +32,14 @@ enum MainWindowState {
   PGP_PASSWORD,
   PHONE_NUMBER,
   AUTH_CODE,
+  AUTH_QR,
   AUTH_PASSWORD,
   LOGGED_IN
 }
 
 const state = ref(MainWindowState.LOADING);
+const codeInfo = ref<LoginCodeInfo | null>(null);
+const qrLink = ref('');
 
 let unlisteners: UnlistenFn[] = [];
 
@@ -49,8 +53,13 @@ onBeforeMount(async () => {
     await listen<any>('ask-login-phone-number', () => {
       state.value = MainWindowState.PHONE_NUMBER;
     }),
-    await listen<any>('ask-login-code', () => {
+    await listen<LoginCodeInfo>('ask-login-code', (event) => {
+      codeInfo.value = event.payload;
       state.value = MainWindowState.AUTH_CODE;
+    }),
+    await listen<string>('ask-login-qr', (event) => {
+      qrLink.value = event.payload;
+      state.value = MainWindowState.AUTH_QR;
     }),
     await listen<any>('ask-login-password', () => {
       state.value = MainWindowState.AUTH_PASSWORD;
@@ -110,7 +119,8 @@ onDeactivated(() => {
   <InitialConfiguration v-if="state === MainWindowState.INITIAL_CONFIG" />
   <EncryptionPassword v-else-if="state === MainWindowState.PGP_PASSWORD" />
   <PhoneNumber v-else-if="state === MainWindowState.PHONE_NUMBER" />
-  <AuthenticationCode v-else-if="state === MainWindowState.AUTH_CODE" />
+  <AuthenticationCode v-else-if="state === MainWindowState.AUTH_CODE" :info="codeInfo" />
+  <QrLogin v-else-if="state === MainWindowState.AUTH_QR" :link="qrLink" />
   <AuthenticationPassword v-else-if="state === MainWindowState.AUTH_PASSWORD" />
   <Main v-else-if="state === MainWindowState.LOGGED_IN" />
 </template>

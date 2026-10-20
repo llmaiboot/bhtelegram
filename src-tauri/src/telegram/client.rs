@@ -87,8 +87,11 @@ impl Client {
                 AuthorizationState::WaitPhoneNumber => {
                     emit(app, "ask-login-phone-number", ());
                 }
-                AuthorizationState::WaitCode { .. } => {
-                    emit(app, "ask-login-code", ());
+                AuthorizationState::WaitCode(wait) => {
+                    emit(app, "ask-login-code", login_code_info(&wait.code_info));
+                }
+                AuthorizationState::WaitOtherDeviceConfirmation(wait) => {
+                    emit(app, "ask-login-qr", wait.link);
                 }
                 AuthorizationState::WaitPassword { .. } => {
                     emit(app, "ask-login-password", ());
@@ -210,5 +213,43 @@ async fn set_tdlib_log_to_file(client_id: i32) -> () {
         if let Err(e) = tdlib::functions::set_log_stream(log_stream, client_id).await {
             log::warn!("Error setting the tdlib log stream: {:?}", e);
         }
+    }
+}
+
+/// What the login screen needs to tell the user where the code went.
+#[derive(serde::Serialize, Clone)]
+pub struct LoginCodeInfo {
+    pub phone_number: String,
+    /// telegram_message | sms | call | flash_call | missed_call | fragment | firebase | unknown
+    pub delivery: String,
+    pub next_delivery: Option<String>,
+    pub length: i32,
+    /// Seconds before the code can be re-sent
+    pub timeout: i32,
+}
+
+fn code_delivery(t: &tdlib::enums::AuthenticationCodeType) -> (&'static str, i32) {
+    use tdlib::enums::AuthenticationCodeType as T;
+    match t {
+        T::TelegramMessage(c) => ("telegram_message", c.length),
+        T::Sms(c) => ("sms", c.length),
+        T::SmsWord(_) | T::SmsPhrase(_) => ("sms", 0),
+        T::Call(c) => ("call", c.length),
+        T::FlashCall(_) => ("flash_call", 0),
+        T::MissedCall(c) => ("missed_call", c.length),
+        T::Fragment(c) => ("fragment", c.length),
+        T::FirebaseAndroid(c) => ("firebase", c.length),
+        T::FirebaseIos(c) => ("firebase", c.length),
+    }
+}
+
+fn login_code_info(info: &tdlib::types::AuthenticationCodeInfo) -> LoginCodeInfo {
+    let (delivery, length) = code_delivery(&info.r#type);
+    LoginCodeInfo {
+        phone_number: info.phone_number.clone(),
+        delivery: delivery.into(),
+        next_delivery: info.next_type.as_ref().map(|t| code_delivery(t).0.to_string()),
+        length,
+        timeout: info.timeout,
     }
 }

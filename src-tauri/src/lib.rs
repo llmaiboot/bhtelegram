@@ -31,6 +31,8 @@ pub fn run() {
             commands::init::start_telegram_client,
             commands::login::set_authentication_phone_number,
             commands::login::set_authentication_code,
+            commands::login::resend_authentication_code,
+            commands::login::request_qr_code_authentication,
             commands::login::set_authentication_password,
             commands::login::is_logged_in,
             commands::login::logout,

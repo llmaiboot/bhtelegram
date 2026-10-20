@@ -48,3 +48,27 @@ pub async fn logout<R: tauri::Runtime>(app: tauri::AppHandle<R>) -> Result<(), S
         .await
         .map_err(|e| e.message)
 }
+
+/// Asks Telegram to send the code again, using `next_type` (usually SMS or a call).
+#[tauri::command]
+pub async fn resend_authentication_code<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<(), String> {
+    tdlib::functions::resend_authentication_code(
+        Some(tdlib::enums::ResendCodeReason::UserRequest),
+        state::get_client_id(&app),
+    )
+    .await
+    .map_err(|e| e.message)
+}
+
+/// Switches to QR login: confirm it from Telegram on a phone
+/// (Settings > Devices > Link Desktop Device). No code is needed.
+#[tauri::command]
+pub async fn request_qr_code_authentication<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<(), String> {
+    tdlib::functions::request_qr_code_authentication(vec![], state::get_client_id(&app))
+        .await
+        .map_err(|e| e.message)
+}

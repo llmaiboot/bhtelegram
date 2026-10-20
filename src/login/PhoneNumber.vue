@@ -6,6 +6,15 @@ const phoneNumber = ref('');
 const error = ref('');
 const disableNextBtn = ref(false);
 
+async function useQr() {
+  error.value = '';
+  try {
+    await invoke('request_qr_code_authentication');
+  } catch (err) {
+    error.value = err as string;
+  }
+}
+
 async function next() {
   error.value = '';
   disableNextBtn.value = true;
@@ -35,6 +44,10 @@ async function next() {
       <div class="control mr-auto ml-auto">
         <button class="button is-link" type="submit" :disabled="disableNextBtn">Next</button>
       </div>
+    </div>
+    <p class="help has-text-centered">International format, e.g. +375291234567</p>
+    <div class="has-text-centered mt-3">
+      <button class="button is-small is-text" type="button" @click="useQr">Log in with QR code</button>
     </div>
   </form>
 </template>
