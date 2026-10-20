@@ -1,14 +1,19 @@
 <h1 align="center">
-  <img src="src/assets/ombra-chat-logo.svg" alt="OmbraChat logo" width="256" height="256"/>
+  <img src="src/assets/bhtelegram-logo.svg" alt="BhTelegram logo" width="256" height="256"/>
   <br>
-  OmbraChat
+  BhTelegram
 </h1>
 
-<p align="center"><strong>Privacy-focused Telegram desktop client</strong></p>
+<p align="center"><strong>Privacy-focused Telegram desktop client — fork of <a href="https://github.com/ombra-chat/ombra-chat">OmbraChat</a></strong></p>
+
+> BhTelegram is a fork of OmbraChat by Sonia Zorba (zonia3000), distributed under the same GPLv3 license.
+> PGP messages stay compatible with OmbraChat users: BhTelegram reads both `ombra-chat-*` and `bhtelegram-*` attachments.
+> Note: OmbraChat users will see messages sent from BhTelegram as plain `.pgp` files, because OmbraChat only recognizes its own prefix.
+
 
 > ⚠️ Alpha release! Expect to find bugs and missing features!
 
-OmbraChat is a desktop client for Telegram designed for privacy-conscious nerds.
+BhTelegram is a desktop client for Telegram designed for privacy-conscious nerds.
 
 In addition to supporting secret chats and encrypting Telegram's local database, it offers some extra features like:
 
@@ -18,17 +23,17 @@ In addition to supporting secret chats and encrypting Telegram's local database,
 
 * Deliberately avoid useless features like AI and animated stickers, as they just increase the attack surface without adding real value.
 
-Following screenshot displays how the PGP messages are seen in OmbraChat and in the standard Telegram client:
+Following screenshot displays how the PGP messages are seen in BhTelegram/OmbraChat and in the standard Telegram client:
 
 ![ombra-chat vs telegram](screenshots/ombra-chat-comparison.png)
 
 > ⚠️ **Disclaimer**: this app is currently a pet project and I'm not a cryptographer, so do not rely on it for highly sensitive data.
 
-The app is named OmbraChat because "ombra" means "shadow" in Italian.
+The original app is named OmbraChat because "ombra" means "shadow" in Italian.
 
 Currently it has been tested only on Linux, but it could work also on other OS.
 
-Source code available on [GitHub](https://github.com/ombra-chat/ombra-chat) and [Codeberg](https://codeberg.org/zonia3000/ombra-chat).
+Fork source code: [GitHub](https://github.com/llmaiboot/bhtelegram). Upstream: [GitHub](https://github.com/ombra-chat/ombra-chat) / [Codeberg](https://codeberg.org/zonia3000/ombra-chat).
 
 ## Implemented features
 
@@ -58,7 +63,7 @@ Moreover, switching to alternative clients with their own encryption will create
 
 ## Install
 
-Check the [latest release](https://github.com/ombra-chat/ombra-chat/releases) for some pre-built binaries.
+Check the [latest release](https://github.com/llmaiboot/bhtelegram/releases) for some pre-built binaries.
 
 If you install the .deb or .rpm you will also need the libtdjson.so file. You can download it from the release page and copy it into `/usr/lib` or other proper location.
 
@@ -72,7 +77,7 @@ During the initial configuration the app generates a PGP keypair for you. You sh
 
 ![initial configuration](screenshots/ombra-chat-initial-config.png)
 
-The keypair uses Curve25519 and is generated using [rPGP](https://github.com/rpgp/rpgp). You can also import an externally generated key, but consider that keys generated with GnuPG may not be fully compatible. The purpose of the "Select PGP key" button is mostly to import a key generated with OmbraChat on a different device.
+The keypair uses Curve25519 and is generated using [rPGP](https://github.com/rpgp/rpgp). You can also import an externally generated key, but consider that keys generated with GnuPG may not be fully compatible. The purpose of the "Select PGP key" button is mostly to import a key generated with BhTelegram/OmbraChat on a different device.
 
 Once the app is started, you can export your key from the settings modal:
 
@@ -92,15 +97,15 @@ It is also possible to manually import a key from file.
 
 ## Application data
 
-The application stores its data in a folder that can be configured during the first setup. The default location is `~/.ombra-chat`.
+The application stores its data in a folder that can be configured during the first setup. The default location is `~/.bhtelegram`.
 
-Preferences are stored in `~/.local/share/net.zonia3000.ombra-chat`.
+Preferences are stored in `~/.local/share/com.llmaiboot.bhtelegram`.
 
 ## Developing
 
 Build tdlib using following instructions: https://tdlib.github.io/td/build.html?language=C
 
-Alternatively, you can download the libtdjson.so from the [release page](https://github.com/ombra-chat/ombra-chat/releases). You may need to configure the pkg-config file, like `/usr/local/lib/pkgconfig/tdjson.pc`:
+Alternatively, you can download the libtdjson.so from the [release page](https://github.com/llmaiboot/bhtelegram/releases). You may need to configure the pkg-config file, like `/usr/local/lib/pkgconfig/tdjson.pc`:
 
 ```
 prefix=/usr/local
@@ -114,7 +119,7 @@ Libs: -L"${prefix}/lib" -ltdjson
 Requires.private: tdjson_private
 ```
 
-Clone tdlib-rs in a folder at the same level of the ombra-chat repo folder:
+Clone tdlib-rs in a folder at the same level of the bhtelegram repo folder:
 
 ```sh
 git clone https://github.com/ombra-chat/tdlib-rs.git
@@ -123,8 +128,8 @@ git clone https://github.com/ombra-chat/tdlib-rs.git
 Install [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/), then clone this repo and install the app dependencies:
 
 ```bash
-git clone https://github.com/ombra-chat/ombra-chat.git
-cd ombra-chat
+git clone https://github.com/llmaiboot/bhtelegram.git
+cd bhtelegram
 npm install
 ```
 
@@ -144,7 +149,7 @@ npm run tauri build
 
 You can use the following environment variables to increase the logging. Notice that TDLib logging can be split from all the other logging, since the library can produce a very verbose output.
 
-* `RUST_LOG=ombra_chat_lib=trace`: standard Rust logging;
+* `RUST_LOG=bhtelegram_lib=trace`: standard Rust logging;
 * `TDLIB_LOG_LEVEL=3`: TDLib logging; values are:
     * 0: fatal errors
     * 1: errors
@@ -168,6 +173,6 @@ The maintainer of this project is concerned about ethical issues related to AI a
 
 ## License
 
-OmbraChat is released under GPLv3.
+BhTelegram, like the original OmbraChat, is released under GPLv3.
 
 The app is based on [tdlib](https://github.com/tdlib/td) released with Boost Software License - copyright Aliaksei Levin (levlam@telegram.org), Arseny Smirnov (arseny30@gmail.com) 2014-2025

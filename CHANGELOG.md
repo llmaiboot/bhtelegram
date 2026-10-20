@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased (BhTelegram)
+
+* Forked from OmbraChat 0.4.1 and rebranded to BhTelegram
+* Data folder changed to `~/.bhtelegram`, app id `com.llmaiboot.bhtelegram`
+* PGP attachments are now named `bhtelegram-*`; `ombra-chat-*` ones are still recognized
+
 ## 0.4.1
 
 * Displayed private chat username and phone number

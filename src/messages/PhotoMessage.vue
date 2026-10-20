@@ -77,7 +77,7 @@ async function openPhotoInTauriWindows(photo: File, largerSize: PhotoSize) {
   const windows = await getAllWebviewWindows();
   const webview = new WebviewWindow(`picture-${windows.length}`, {
     url: 'picture.html?path=' + encodeURIComponent(photo.path!),
-    title: 'OmbraChat - Picture',
+    title: 'BhTelegram - Picture',
     width: largerSize.width,
     height: largerSize.height,
   });

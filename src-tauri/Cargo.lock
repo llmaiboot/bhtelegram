@@ -458,6 +458,32 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2af50177e190e07a26ab74f8b1efbfe2ef87da2116221318cb1c2e82baf7de06"
 
 [[package]]
+name = "bhtelegram"
+version = "0.4.1"
+dependencies = [
+ "base64 0.23.1",
+ "env_logger",
+ "hex",
+ "image",
+ "log",
+ "mime",
+ "pbkdf2",
+ "pgp",
+ "rand 0.8.7",
+ "rayon",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-opener",
+ "tauri-plugin-store",
+ "tdlib",
+ "trpl",
+]
+
+[[package]]
 name = "bit-set"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3679,32 +3705,6 @@ dependencies = [
  "cipher",
  "ctr",
  "subtle",
-]
-
-[[package]]
-name = "ombra-chat"
-version = "0.4.1"
-dependencies = [
- "base64 0.23.1",
- "env_logger",
- "hex",
- "image",
- "log",
- "mime",
- "pbkdf2",
- "pgp",
- "rand 0.8.7",
- "rayon",
- "serde",
- "serde_json",
- "sha2",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-opener",
- "tauri-plugin-store",
- "tdlib",
- "trpl",
 ]
 
 [[package]]

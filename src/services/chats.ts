@@ -51,7 +51,7 @@ export async function handleChatsUpdates() {
     await listen<number>('update-unread-chat-count', async (event) => {
       const count = event.payload;
       const mainWindow = new Window('main');
-      await mainWindow.setTitle(count > 0 ? '★ OmbraChat' : 'OmbraChat');
+      await mainWindow.setTitle(count > 0 ? '★ BhTelegram' : 'BhTelegram');
     }),
     await listen<UpdateMessageSendSucceeded>('update-message-send-succeeded', async (event) => {
       const update = event.payload;

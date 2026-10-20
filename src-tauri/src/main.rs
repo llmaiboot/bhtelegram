@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    ombra_chat_lib::run()
+    bhtelegram_lib::run()
 }

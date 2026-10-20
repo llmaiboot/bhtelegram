@@ -26,11 +26,11 @@ onMounted(async () => {
       </header>
       <section class="modal-card-body has-text-centered p-3">
         <figure class="image is-128x128 m-auto">
-          <img src="./assets/ombra-chat-logo.svg" />
+          <img src="./assets/bhtelegram-logo.svg" />
         </figure>
-        <p class="mt-2"><strong>OmbraChat {{ version }}</strong></p>
+        <p class="mt-2"><strong>BhTelegram {{ version }}</strong></p>
         <p class="mt-2">
-          Made with
+          Fork of OmbraChat, made with
           <FontAwesomeIcon :icon="faHeart" />
           by <strong>zonia3000</strong>
         </p>

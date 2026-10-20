@@ -4,10 +4,10 @@ use crate::{
 };
 use std::{env, error::Error, fs, path::PathBuf};
 
-pub fn get_default_ombra_chat_folder() -> Option<PathBuf> {
+pub fn get_default_bhtelegram_folder() -> Option<PathBuf> {
     if let Some(home_dir) = env::home_dir() {
         let mut pgp_path = home_dir;
-        pgp_path.push(".ombra-chat");
+        pgp_path.push(".bhtelegram");
         Some(pgp_path)
     } else {
         None
@@ -15,7 +15,7 @@ pub fn get_default_ombra_chat_folder() -> Option<PathBuf> {
 }
 
 pub fn get_default_folder() -> String {
-    get_default_ombra_chat_folder()
+    get_default_bhtelegram_folder()
         .map(|path| path.to_string_lossy().into_owned())
         .unwrap_or_else(|| String::new())
 }

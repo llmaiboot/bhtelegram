@@ -21,7 +21,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build ombra-chat 
+      - name: Build bhtelegram 
         run: |
           cd docker
           docker buildx build --platform=linux/${{ matrix.platform }} . --build-arg TAG=${{ github.ref_name }} -o build
@@ -31,7 +31,7 @@ jobs:
         with:
           draft: true
           files: |
-            docker/build/ombra-chat*.deb
-            docker/build/ombra-chat*.rpm
-            docker/build/ombra-chat*.AppImage
+            docker/build/bhtelegram*.deb
+            docker/build/bhtelegram*.rpm
+            docker/build/bhtelegram*.AppImage
             docker/build/libtdjson-*.so.*

@@ -85,7 +85,8 @@ fn parse_content<R: tauri::Runtime>(
 
             let has_encryption =
                 store::get_chat_config(app, message.chat_id).map(|c| c.key) != None;
-            if file_name.starts_with("ombra-chat-") {
+            // "ombra-chat-" is kept for compatibility with upstream OmbraChat clients
+            if file_name.starts_with("bhtelegram-") || file_name.starts_with("ombra-chat-") {
                 if has_encryption {
                     if file_name.ends_with(".txt.pgp") {
                         return parse_pgp_text_message(app, content);

@@ -285,7 +285,7 @@ pub fn get_pgp_file_path<R: tauri::Runtime>(
     path.push("messages");
     fs::create_dir_all(path.clone())?;
     path.push(format!(
-        "ombra-chat-{}{}",
+        "bhtelegram-{}{}",
         utils::generate_random_string(10),
         suffix
     ));
@@ -311,7 +311,7 @@ pub fn get_my_public_key_tmp_file<R: tauri::Runtime>(
     let app_folder = store::get_application_folder(&app);
     let mut path = PathBuf::from(app_folder);
     path.push("keys");
-    path.push(format!("ombra-chat-{}.key", encryption_key.fingerprint()));
+    path.push(format!("bhtelegram-{}.key", encryption_key.fingerprint()));
 
     let mut file = File::create(&path)?;
     file.write_all(key_data.as_bytes())?;
