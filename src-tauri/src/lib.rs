@@ -8,11 +8,24 @@ mod state;
 mod store;
 mod telegram;
 mod thumbnails;
+mod zk;
 use serde::Serialize;
 use std::sync::Mutex;
 use tauri::{Emitter, Manager};
 
 use crate::files::set_allowed_files_paths;
+
+#[cfg(mobile)]
+static SUSPENDED_AT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+#[cfg(mobile)]
+const AUTO_LOCK_SECS: u64 = 60;
+#[cfg(mobile)]
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -75,9 +88,18 @@ pub fn run() {
             commands::pgp::hide_all_chats,
             commands::privacy::get_privacy_settings,
             commands::privacy::set_privacy_settings,
+            commands::zk::zk_start_session,
+            commands::zk::zk_accept_invite,
+            commands::zk::zk_send_text,
+            commands::zk::zk_end_session,
+            commands::zk::zk_status,
+            commands::zk::zk_set_verified,
+            commands::init::lock_app,
+            commands::init::unlock_app,
         ])
         .setup(|app| {
             app.manage(Mutex::new(state::AppState::new()));
+            app.manage(zk::ZkState::default());
             set_allowed_files_paths(app.handle()).unwrap();
             // Leftovers of a previous session that did not exit cleanly.
             if let Err(e) = crypto::plaintext::wipe_plaintext_files(app.handle()) {
@@ -86,6 +108,21 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| match event {
+            // Auto-lock: the file picker also pauses the activity, so lock
+            // only when the app stayed in background longer than a minute.
+            #[cfg(mobile)]
+            tauri::WindowEvent::Suspended => {
+                SUSPENDED_AT.store(now_secs(), std::sync::atomic::Ordering::SeqCst);
+            }
+            #[cfg(mobile)]
+            tauri::WindowEvent::Resumed => {
+                let at = SUSPENDED_AT.swap(0, std::sync::atomic::Ordering::SeqCst);
+                if at != 0 && now_secs().saturating_sub(at) >= AUTO_LOCK_SECS
+                    && state::is_logged_in(window.app_handle())
+                {
+                    commands::init::lock_app(window.app_handle().clone());
+                }
+            }
             tauri::WindowEvent::CloseRequested { api, .. } => {
                 log::trace!("CloseRequested {}", window.label());
                 if window.label() == "main" {

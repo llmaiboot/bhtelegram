@@ -68,6 +68,7 @@ pub fn save_initial_config<R: tauri::Runtime>(
     }
     store::set_initial_config_done(app, true);
 
+    crate::zk::unlock(app, pgp_password)?;
     state::set_pgp_passphrase(app, pgp_password);
 
     Ok(())

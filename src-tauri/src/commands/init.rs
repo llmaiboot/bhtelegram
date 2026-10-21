@@ -47,6 +47,33 @@ pub fn check_pgp_passphrase<R: tauri::Runtime>(
 ) -> Result<(), String> {
     let key = state::get_my_key(&app).map_err(|e| e.to_string())?;
     crypto::pgp::check_secret_key(&key, passphrase).map_err(|e| e.to_string())?;
+    crate::zk::unlock(&app, passphrase)?;
+    state::set_pgp_passphrase(&app, passphrase);
+    Ok(())
+}
+
+/// Auto-lock (app went to background / user pressed lock): forget the
+/// passphrase, the unlocked ZK engine and every revealed chat, wipe
+/// decrypted files. TDLib keeps running so delivery is not interrupted.
+#[tauri::command]
+pub fn lock_app<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
+    crate::zk::lock(&app);
+    state::set_pgp_passphrase(&app, "");
+    state::hide_all_chats(&app);
+    if let Err(e) = crypto::plaintext::wipe_plaintext_files(&app) {
+        log::warn!("Unable to wipe decrypted files: {}", e);
+    }
+    crate::emit(&app, "app-locked", ());
+}
+
+#[tauri::command]
+pub fn unlock_app<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    passphrase: &str,
+) -> Result<(), String> {
+    let key = state::get_my_key(&app).map_err(|e| e.to_string())?;
+    crypto::pgp::check_secret_key(&key, passphrase).map_err(|e| e.to_string())?;
+    crate::zk::unlock(&app, passphrase)?;
     state::set_pgp_passphrase(&app, passphrase);
     Ok(())
 }

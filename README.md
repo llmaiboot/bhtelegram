@@ -63,6 +63,24 @@ Ideas adopted from [zkgram](https://github.com/Gerate-Technik/zkgram), adapted t
 | Past messages after a key leak | PGP has no forward secrecy: a leaked private key decrypts all previous messages. |
 | SSD/CoW remnants | Wiped files are overwritten before deletion, but SSDs and copy-on-write filesystems may keep old blocks. |
 
+## Secure chats (zero-knowledge mode)
+
+Idea and threat model from [zkgram](https://github.com/Gerate-Technik/zkgram): Telegram is an untrusted wire and must only ever see ciphertext. The protocol is different: instead of a hand-made ECDH + AES scheme BhTelegram uses the audited **Olm Double Ratchet** (Signal-style, [vodozemac](https://github.com/matrix-org/vodozemac) by Matrix).
+
+| Property | How |
+|---|---|
+| End-to-end encryption, per-message keys | Olm Double Ratchet: every message has its own key; leaking today's keys does not reveal past messages (forward secrecy) and the session heals itself (post-compromise security) |
+| No key exchange through files | Shield button → an invitation with public keys (Ed25519 + Curve25519 + one-time key, signed) is sent as a normal message; the peer taps "Accept" |
+| MITM protection | 60-digit safety number, identical on both phones; compare it by voice and press "Codes match". If the peer's identity changes the shield turns red |
+| Ciphertext disguise | Bytes are encoded as Russian words (WordCoder dictionary from zkgram), Telegram sees a line of words, not base64 |
+| Local data | Identity, ratchet state and decrypted history encrypted with Argon2id (from the passphrase) + XChaCha20-Poly1305; nothing in plaintext on disk |
+| Secret view | Decrypted text is shown only after the eye button, as for PGP |
+| Phone | No screenshots / recent-apps preview (FLAG_SECURE), no cloud backup, auto-lock after 60 s in background, Lock item in the menu |
+
+Limits: only text for now (files go through PGP), messages are readable only on the device that received them (no multi-device), metadata (who talks to whom and when) stays visible to Telegram. Both sides need BhTelegram.
+
+The engine (`src-tauri/src/crypto/zk`) has no dependency on Tauri or TDLib (enforced by `tests/layers.rs`) and is covered by end-to-end tests: handshake, out-of-order delivery, restart, tampering, key change, chunking, re-keying.
+
 ## Implemented features
 
 * Text messages

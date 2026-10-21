@@ -393,6 +393,8 @@ pub enum MessageContent {
     PgpHidden(MessagePgpHidden),
     #[serde(rename(serialize = "messageError", deserialize = "messageError"))]
     Error(MessageError),
+    #[serde(rename(serialize = "messageZk", deserialize = "messageZk"))]
+    Zk(MessageZk),
     #[serde(rename(serialize = "messageUnsupported", deserialize = "messageUnsupported"))]
     Unsupported(tdlib::enums::MessageContent),
 }
@@ -458,6 +460,16 @@ pub struct MessagePgpKey {
 #[derive(serde::Serialize, Clone)]
 pub struct MessagePgpHidden {
     pub is_file: bool,
+}
+
+/// Zero-knowledge (Double Ratchet + WordCoder) message.
+/// kind: invite | invite_accepted | started | ended | text | hidden |
+///       undecryptable | locked. `text` is set only for kind "text".
+#[derive(serde::Serialize, Clone)]
+pub struct MessageZk {
+    pub kind: String,
+    pub text: Option<String>,
+    pub outgoing: bool,
 }
 
 #[derive(serde::Serialize, Clone)]

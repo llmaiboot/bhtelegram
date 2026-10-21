@@ -70,6 +70,11 @@ fn parse_content<R: tauri::Runtime>(
     let content = &message.content;
     match content {
         tdlib::enums::MessageContent::MessageText(content) => {
+            if let Some(zk) =
+                crate::zk::parse_text(app, message.chat_id, &content.text.text, message.is_outgoing)
+            {
+                return zk;
+            }
             return MessageContent::Text(MessageText {
                 text: content.text.text.clone(),
             });

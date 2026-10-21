@@ -1,6 +1,12 @@
 <script setup lang="ts">
 import { invoke } from '@tauri-apps/api/core';
 import { store } from './store';
+import { lockApp } from './services/zk';
+
+async function lock() {
+  store.toggleSidebar();
+  await lockApp();
+}
 
 async function logout() {
   try {
@@ -33,6 +39,7 @@ function openAboutModal() {
       </a>
     </div>
     <ul class="menu-list">
+      <li><a href="#" @click="lock">Lock</a></li>
       <li><a href="#" @click="openSettingsModal">Settings</a></li>
       <li><a href="#" @click="logout">Logout</a></li>
       <li><a href="#" @click="openAboutModal">About</a></li>

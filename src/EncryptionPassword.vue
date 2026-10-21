@@ -2,6 +2,9 @@
 import { invoke } from '@tauri-apps/api/core';
 import { nextTick, onMounted, ref } from 'vue';
 
+const props = defineProps<{ unlock?: boolean }>();
+const emit = defineEmits<{ unlocked: [] }>();
+
 const passphrase = ref('');
 const error = ref('');
 const disableNextBtn = ref(false);
@@ -10,6 +13,12 @@ async function next() {
   error.value = '';
   disableNextBtn.value = true;
   try {
+    if (props.unlock) {
+      await invoke('unlock_app', { passphrase: passphrase.value });
+      passphrase.value = '';
+      emit('unlocked');
+      return;
+    }
     await invoke('check_pgp_passphrase', { passphrase: passphrase.value });
     await invoke('start_telegram_client');
   } catch (err) {
@@ -34,7 +43,7 @@ onMounted(async () => {
 <template>
   <form @submit.prevent="next" class="m-5">
     <div class="field mt-3">
-      <label class="label mb-0" for="passphrase">PGP passphrase</label>
+      <label class="label mb-0" for="passphrase">{{ props.unlock ? 'Locked — enter passphrase' : 'PGP passphrase' }}</label>
       <div class="control">
         <input class="input" type="password" id="passphrase" v-model="passphrase" />
       </div>

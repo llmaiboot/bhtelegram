@@ -50,3 +50,13 @@ fn crypto_layer_does_not_know_telegram() {
 fn telegram_layer_does_not_know_crypto() {
     assert_layer_does_not_use("telegram", &["crate::crypto", "pgp::"]);
 }
+
+#[test]
+fn zk_engine_is_pure() {
+    // The ZK engine must not depend on the app, Tauri or TDLib at all, so it
+    // can be audited and unit-tested on its own.
+    assert_layer_does_not_use(
+        "crypto/zk",
+        &["tdlib::", "tauri::", "crate::telegram", "crate::commands", "crate::state", "crate::store"],
+    );
+}

@@ -33,7 +33,8 @@ enum MainWindowState {
   AUTH_CODE,
   AUTH_QR,
   AUTH_PASSWORD,
-  LOGGED_IN
+  LOGGED_IN,
+  UNLOCK
 }
 
 const state = ref(MainWindowState.LOADING);
@@ -65,6 +66,16 @@ onBeforeMount(async () => {
     }),
     await listen<any>('logged-in', () => {
       state.value = MainWindowState.LOGGED_IN;
+    }),
+    // Auto-lock / manual lock: ask the passphrase again; TDLib keeps running.
+    await listen('app-locked', () => {
+      // Drop decrypted messages from the WebView memory as well.
+      store.clearMessages();
+      store.selectChat(null);
+      store.selectedChatRevealed = false;
+      store.selectedZk = null;
+      store.zkModalActive = false;
+      state.value = MainWindowState.UNLOCK;
     }),
     await listen<number>('my-id', (event) => {
       store.myId = event.payload;
@@ -114,6 +125,8 @@ onDeactivated(() => {
 <template>
   <InitialConfiguration v-if="state === MainWindowState.INITIAL_CONFIG" />
   <EncryptionPassword v-else-if="state === MainWindowState.PGP_PASSWORD" />
+  <EncryptionPassword v-else-if="state === MainWindowState.UNLOCK" unlock
+    @unlocked="() => state = MainWindowState.LOGGED_IN" />
   <PhoneNumber v-else-if="state === MainWindowState.PHONE_NUMBER" />
   <AuthenticationCode v-else-if="state === MainWindowState.AUTH_CODE" :info="codeInfo" />
   <QrLogin v-else-if="state === MainWindowState.AUTH_QR" :link="qrLink" />

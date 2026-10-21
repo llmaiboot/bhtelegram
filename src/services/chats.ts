@@ -3,6 +3,7 @@ import { listen } from '@tauri-apps/api/event'
 import { Window } from "@tauri-apps/api/window"
 import { store } from '../store'
 import { Chat, ChatPosition, InputMessageContent, InputMessageReplyTo, Message, MessageContent, SecretChat, UpdateChatReadInbox, UpdateDeleteMessages, File, UpdateMessageReactions, UpdateMessageSendSucceeded } from '../model';
+import { zkStatus } from './zk';
 import { invoke } from '@tauri-apps/api/core';
 import { getChatKey, isChatRevealed } from './pgp';
 
@@ -99,6 +100,11 @@ export async function selectChat(id: number, reload: boolean = false) {
     }
     store.selectedChatKey = await getChatKey(id);
     store.selectedChatRevealed = await isChatRevealed(id);
+    try {
+      store.selectedZk = await zkStatus(id);
+    } catch {
+      store.selectedZk = null;
+    }
     store.loadingNewMessages = true;
     const messages = await invoke<Message[]>('open_chat', {
       chatId: id,
@@ -240,6 +246,9 @@ export async function deleteChat(chatId: number) {
 
 export function getMessageTextContent(content: MessageContent): string | null {
   if (content['@type'] === 'messageText') {
+    return content.text;
+  }
+  if (content['@type'] === 'messageZk') {
     return content.text;
   }
   if ('caption' in content && content.caption) {

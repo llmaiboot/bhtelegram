@@ -16,6 +16,7 @@ import { getForwardedFromTitle, getMessageTextContent, getRepliedMessage, getSen
 import { removeMessageReaction } from '../services/effects';
 import AnimatedEmojiMessage from './AnimatedEmojiMessage.vue';
 import VoiceNoteMessage from './VoiceNoteMessage.vue';
+import ZkMessage from './ZkMessage.vue';
 
 const props = defineProps<{
   message: MessageWithStatus
@@ -26,6 +27,9 @@ const isMyMessage = computed(() => {
 });
 
 const isEncryptedMessage = computed(() => {
+  if (props.message.content['@type'] === 'messageZk') {
+    return true;
+  }
   if (store.selectedChatKey === '') {
     return false;
   }
@@ -123,7 +127,9 @@ onMounted(async () => {
         </a>
         <strong class="mr-2" v-else>{{ forwardedFromTitle }}</strong>
       </div>
-      <PgpTextMessage v-if="message.content['@type'] === 'messagePgpText'" :message="message"
+      <ZkMessage v-if="message.content['@type'] === 'messageZk'" :message="message"
+        :content="message.content" />
+      <PgpTextMessage v-else-if="message.content['@type'] === 'messagePgpText'" :message="message"
         :content="message.content" />
       <PgpDocumentMessage v-else-if="message.content['@type'] === 'messagePgpFile'" :message="message"
         :content="message.content" />

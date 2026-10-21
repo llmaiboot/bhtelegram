@@ -115,7 +115,14 @@ export type MessagePgpKey = {
   key_info: PublicKeyCompleteInfo | null;
 }
 
-export type MessageContent = MessageText | MessagePhoto | MessageDocument | MessageAnimatedEmoji | MessageVoiceNote | MessagePgpText | MessagePgpFile | MessagePgpKey | MessagePgpHidden;
+export type MessageZk = {
+  '@type': 'messageZk';
+  kind: 'invite' | 'invite_accepted' | 'started' | 'ended' | 'text' | 'hidden' | 'undecryptable' | 'locked';
+  text: string | null;
+  outgoing: boolean;
+}
+
+export type MessageContent = MessageText | MessagePhoto | MessageDocument | MessageAnimatedEmoji | MessageVoiceNote | MessagePgpText | MessagePgpFile | MessagePgpKey | MessagePgpHidden | MessageZk;
 
 export type Message = {
   id: number;

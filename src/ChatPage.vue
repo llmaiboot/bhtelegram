@@ -14,6 +14,31 @@ import ChatSettingsModal from './ChatSettingsModal.vue';
 import MessageModal from './MessageModal.vue';
 import ChatKeyModal from './ChatKeyModal.vue';
 import UserModal from './UserModal.vue';
+import ZkModal from './ZkModal.vue';
+import { faShieldHalved } from '@fortawesome/free-solid-svg-icons';
+import { zkSendText, zkStartSession, zkStatus } from './services/zk';
+
+const zkActive = computed(() => store.selectedZk?.state === 'active');
+const zkError = ref('');
+
+// Zero-knowledge session: invite (public keys only) or open the safety
+// number dialog when a session already runs.
+async function zkButton() {
+  const chat = store.selectedChat;
+  if (!chat) return;
+  zkError.value = '';
+  if (zkActive.value) {
+    store.zkModalActive = true;
+    return;
+  }
+  if (!confirm('Отправить приглашение в защищённый чат? Собеседнику нужен BhTelegram.')) return;
+  try {
+    await zkStartSession(chat.id);
+    store.selectedZk = await zkStatus(chat.id);
+  } catch (err) {
+    zkError.value = err as string;
+  }
+}
 
 type SelectedFile = { path: string; image: boolean; }
 
@@ -78,8 +103,26 @@ function scrollToMessage(messageId: number) {
 }
 
 async function send() {
-  const contents = await getInputMessageContents();
   const chat = store.selectedChat;
+  if (chat && zkActive.value) {
+    zkError.value = '';
+    if (selectedFiles.value.length > 0) {
+      zkError.value = 'Файлы в защищённом чате пока не поддерживаются';
+      return;
+    }
+    try {
+      await zkSendText(chat.id, newMessageText.value);
+      clear();
+      const chatContent = document.getElementById('chat-content');
+      if (chatContent) {
+        chatContent.scrollTo(0, chatContent.scrollHeight);
+      }
+    } catch (err) {
+      zkError.value = err as string;
+    }
+    return;
+  }
+  const contents = await getInputMessageContents();
   if (contents.length === 0 || !chat) {
     return;
   }
@@ -343,7 +386,12 @@ watch(() => store.selectedChat?.id, () => clear());
         </button>
       </div>
       <div id="chat-settings-btn-wrapper">
-        <button type="button" v-if="store.selectedChatKey !== ''" class="button ml-2"
+        <button type="button" class="button ml-2" @click="zkButton"
+          :class="{ 'is-success': zkActive && store.selectedZk?.verified, 'is-warning': zkActive && !store.selectedZk?.verified && !store.selectedZk?.peer_changed, 'is-danger': zkActive && store.selectedZk?.peer_changed }"
+          :title="zkActive ? 'Защищённый чат' : 'Начать защищённый чат'" aria-label="Secure chat">
+          <FontAwesomeIcon :icon="faShieldHalved" />
+        </button>
+        <button type="button" v-if="store.selectedChatKey !== '' || zkActive || store.selectedZk?.has_history" class="button ml-2"
           :class="{ 'is-warning': store.selectedChatRevealed }" @click="toggleReveal"
           :title="store.selectedChatRevealed ? 'Hide encrypted messages' : 'Show encrypted messages'"
           :aria-label="store.selectedChatRevealed ? 'Hide encrypted messages' : 'Show encrypted messages'">
@@ -393,8 +441,10 @@ watch(() => store.selectedChat?.id, () => clear());
         </a>
       </div>
     </div>
+    <div class="notification is-danger is-light p-2 m-1" v-if="zkError">{{ zkError }}</div>
     <div id="send-message-box" v-if="canWriteMessages">
-      <input type="text" class="input" id="new-message-text" v-model="newMessageText" @keyup.enter="send" />
+      <input type="text" class="input" id="new-message-text" v-model="newMessageText" @keyup.enter="send"
+        :placeholder="zkActive ? 'Защищённое сообщение' : ''" :class="{ 'is-success': zkActive }" />
       <button type="button" class="button is-primary" @click="selectFiles" aria-label="Attach file">
         <FontAwesomeIcon :icon="faPaperclip" />
       </button>
@@ -407,6 +457,7 @@ watch(() => store.selectedChat?.id, () => clear());
   <MessageModal />
   <ChatKeyModal />
   <UserModal />
+  <ZkModal />
 </template>
 
 <style>

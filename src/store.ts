@@ -1,5 +1,6 @@
 import { reactive } from 'vue'
 import type { ChatFolder, Message, File, User, MessageWithStatus, Chat, SecretChat } from './model';
+import type { ZkStatus } from './services/zk';
 import { viewMessage } from './services/chats';
 
 type Store = {
@@ -23,6 +24,9 @@ type Store = {
   selectedChatKey: string;
   // Decrypted PGP content of the selected chat is visible (secret view)
   selectedChatRevealed: boolean;
+  // Zero-knowledge (Double Ratchet) session of the selected chat
+  selectedZk: ZkStatus | null;
+  zkModalActive: boolean;
   loadingNewMessages: boolean;
   messagesToLoad: number[];
   messagesBubblesToLoad: number[];
@@ -136,6 +140,8 @@ export const store = reactive<Store>({
   },
   selectedChatKey: '',
   selectedChatRevealed: false,
+  selectedZk: null,
+  zkModalActive: false,
   loadingNewMessages: false,
   messagesToLoad: [],
   messagesBubblesToLoad: [],
