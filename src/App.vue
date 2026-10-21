@@ -21,6 +21,7 @@ import Main from './Main.vue';
 import { handleChatsUpdates } from './services/chats';
 import { invoke } from '@tauri-apps/api/core';
 import { store } from './store';
+import { zkStatus } from './services/zk';
 import { handleUsersUpdates } from './services/users';
 import { handleEffectsUpdates } from './services/effects';
 import { handleFoldersUpdates } from './services/folders';
@@ -73,9 +74,28 @@ onBeforeMount(async () => {
       store.clearMessages();
       store.selectChat(null);
       store.selectedChatRevealed = false;
+      store.selectedChatKey = '';
       store.selectedZk = null;
+      store.zkUnknown = false;
       store.zkModalActive = false;
+      store.selectedMessage = null;
+      store.replyToMessage = null;
+      store.replyToQuote = null;
+      store.messageModalActive = false;
+      store.chatKeyModalActive = false;
       state.value = MainWindowState.UNLOCK;
+    }),
+    // Session started/ended/key changed in some chat: refresh the shield.
+    await listen<number>('update-zk-status', async (event) => {
+      const id = event.payload;
+      if (store.selectedChat?.id !== id) return;
+      try {
+        const st = await zkStatus(id);
+        if (store.selectedChat?.id === id) {
+          store.selectedZk = st;
+          store.zkUnknown = false;
+        }
+      } catch { /* locked */ }
     }),
     await listen<number>('my-id', (event) => {
       store.myId = event.payload;

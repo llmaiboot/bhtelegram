@@ -40,6 +40,8 @@ impl AppState {
 pub fn set_pgp_passphrase<R: tauri::Runtime>(app: &tauri::AppHandle<R>, pgp_passphrase: &str) {
     let state = app.state::<Mutex<AppState>>();
     let mut state = state.lock().unwrap();
+    use zeroize::Zeroize;
+    state.pgp_passphrase.zeroize();
     state.pgp_passphrase = String::from(pgp_passphrase);
 }
 
@@ -164,6 +166,29 @@ pub fn is_chat_revealed<R: tauri::Runtime>(app: &tauri::AppHandle<R>, chat_id: i
     let state = app.state::<Mutex<AppState>>();
     let state = state.lock().unwrap();
     state.revealed_chats.contains(&chat_id)
+}
+
+/// Revealed by the user in this session, ignoring the auto-decrypt option.
+pub fn is_chat_explicitly_revealed<R: tauri::Runtime>(app: &tauri::AppHandle<R>, chat_id: i64) -> bool {
+    let state = app.state::<Mutex<AppState>>();
+    let state = state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    state.revealed_chats.contains(&chat_id)
+}
+
+pub fn forget_cached_key<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    let state = app.state::<Mutex<AppState>>();
+    state.lock().unwrap_or_else(std::sync::PoisonError::into_inner).my_key = None;
+}
+
+/// Forgets the cached (decrypted) PGP key and the passphrase.
+pub fn forget_secrets<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
+    use zeroize::Zeroize;
+    let state = app.state::<Mutex<AppState>>();
+    let mut state = state.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    state.pgp_passphrase.zeroize();
+    state.my_key = None;
+    state.keys_cache.clear();
+    state.revealed_chats.clear();
 }
 
 pub fn set_chat_revealed<R: tauri::Runtime>(

@@ -15,6 +15,7 @@
 * Android build (Tauri mobile): TDLib build script, app-private data folder, mobile-safe UI paths, data-theme dark mode
 * Login: shows where the code was sent, resend by SMS/call, QR login
 * Secure chats: Olm Double Ratchet (vodozemac), invite/accept in chat, safety numbers, WordCoder disguise, encrypted local state (Argon2id + XChaCha20-Poly1305)
+* Secure chats: encrypted files and voice messages, Telegram account binding, key-change lock, replay detection, crash-safe storage and passphrase change, no plaintext/forward downgrade
 * Lock: manual lock and auto-lock after 60 s in background on phones
 * Android: FLAG_SECURE, backups disabled
 

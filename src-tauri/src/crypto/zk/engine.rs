@@ -5,14 +5,19 @@
 //! module is pure (no Tauri, no TDLib) so it can be unit-tested end to end.
 //!
 //! Wire = WordCoder(b"ZK" | version | type | payload)
-//!   type 1 INVITE  : ed25519(32) | curve25519(32) | one-time key(32) | sig(64)
+//!   type 1 INVITE  : ed25519(32) | curve25519(32) | one-time key(32) |
+//!                    telegram user id(8) | sig(64) over INVITE_CTX|curve|otk|tg id
 //!   type 2 PREKEY  : Olm pre-key message
 //!   type 3 MESSAGE : Olm normal message
 //! Inside Olm: kind(1) | [ident] | data
 //!   kind 1 TEXT    : utf-8
 //!   kind 2 ACCEPT  : empty (session established)
 //!   kind 3 END     : empty
-//!   kind | 0x80    : ident = ed25519(32) | sig(64) over ACCEPT_CTX|my curve|their curve.
+//!   kind 4 FILE    : flags(1) | file key(32). Sent as the caption of a
+//!                    Telegram document whose content is `seal_file` output
+//!                    (XChaCha20-Poly1305, name/mime/caption inside).
+//!   kind | 0x80    : ident = ed25519(32) | sig(64) over
+//!                    ACCEPT_CTX|my curve|their curve|my tg id|their tg id.
 //!                    Set on every message until the peer answered, so the
 //!                    receiver can bind the session to an identity whatever
 //!                    message reaches it first (history is not ordered).
@@ -25,7 +30,7 @@ use super::vault::Vault;
 use super::wordcoder;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256, Sha512};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 use vodozemac::olm::{
@@ -34,30 +39,43 @@ use vodozemac::olm::{
 use vodozemac::{Curve25519PublicKey, Ed25519PublicKey, Ed25519Signature};
 
 const MAGIC: &[u8; 2] = b"ZK";
-const VERSION: u8 = 1;
+const VERSION: u8 = 2;
 const T_INVITE: u8 = 1;
 const T_PREKEY: u8 = 2;
 const T_MESSAGE: u8 = 3;
 const K_TEXT: u8 = 1;
 const K_ACCEPT: u8 = 2;
 const K_END: u8 = 3;
+const K_FILE: u8 = 4;
 const K_IDENT: u8 = 0x80;
+pub const FILE_FLAG_VOICE: u8 = 1;
+/// Telegram caption limit (characters) for non-premium accounts.
+pub const MAX_CAPTION_CHARS: usize = 1024;
+const FILE_MAGIC: &[u8; 6] = b"BHZF1\0";
+const FILE_AAD: &[u8] = b"BhTelegram-ZK-file-v1";
 const IDENT_LEN: usize = 96;
-const INVITE_CTX: &[u8] = b"BhTelegram-ZK-invite-v1";
-const ACCEPT_CTX: &[u8] = b"BhTelegram-ZK-accept-v1";
+const INVITE_CTX: &[u8] = b"BhTelegram-ZK-invite-v2";
+/// ed25519 | curve25519 | one-time key | tg id | signature
+const INVITE_LEN: usize = 32 + 32 + 32 + 8 + 64;
+const ACCEPT_CTX: &[u8] = b"BhTelegram-ZK-accept-v2";
 /// Plaintext bytes per Telegram message: worst case WordCoder output for
 /// chunk + Olm overhead stays below Telegram's 4096 character limit.
 pub const MAX_CHUNK_BYTES: usize = 300;
 /// 4096 Telegram characters / 7 (longest word + space).
 #[cfg(test)]
 pub const MAX_WIRE_BYTES: usize = 585;
-const MAX_SESSIONS_PER_CHAT: usize = 3;
+const MAX_SESSIONS_PER_CHAT: usize = 4;
 const MAX_HISTORY_PER_CHAT: usize = 10_000;
 
+/// Long-term identity of a peer: Olm keys plus the Telegram account that
+/// signed them (binds the session to a Telegram user, so a third party
+/// cannot relay or forward handshake messages between other chats).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PeerIdentity {
     pub ed25519: [u8; 32],
     pub curve25519: [u8; 32],
+    #[serde(default)]
+    pub tg_id: i64,
 }
 
 impl PeerIdentity {
@@ -67,6 +85,20 @@ impl PeerIdentity {
         b[32..].copy_from_slice(&self.curve25519);
         b
     }
+    fn same_keys(&self, o: &PeerIdentity) -> bool {
+        self.ed25519 == o.ed25519 && self.curve25519 == o.curve25519
+    }
+}
+
+/// Where a Telegram message came from.
+#[derive(Clone, Copy, Debug)]
+pub struct Envelope {
+    pub chat_id: i64,
+    /// Telegram message id, 0 if unknown (disables replay detection).
+    pub message_id: i64,
+    /// Telegram user id of the sender (0 for channels / anonymous).
+    pub sender_id: i64,
+    pub outgoing: bool,
 }
 
 /// What a Telegram text turned out to be.
@@ -81,9 +113,26 @@ pub enum Incoming {
     /// Session established (ACCEPT control message).
     Started { outgoing: bool },
     Ended { outgoing: bool },
+    /// Encrypted attachment: the key travels in the ratchet, the content in
+    /// the Telegram document.
+    File { key: [u8; 32], flags: u8, outgoing: bool },
     /// ZK message that cannot be read here (sent from another device, key
-    /// already used, wrong session...).
+    /// already used, replayed, wrong sender...).
     Undecryptable { outgoing: bool },
+}
+
+impl Incoming {
+    fn outgoing(&self) -> Option<bool> {
+        match self {
+            Incoming::NotZk => None,
+            Incoming::Invite { outgoing, .. }
+            | Incoming::Text { outgoing, .. }
+            | Incoming::Started { outgoing }
+            | Incoming::Ended { outgoing }
+            | Incoming::File { outgoing, .. }
+            | Incoming::Undecryptable { outgoing } => Some(*outgoing),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -94,20 +143,37 @@ struct SessionEntry {
 
 #[derive(Serialize, Deserialize, Default)]
 struct ChatFile {
-    /// Newest last. Encryption always uses the newest one.
+    /// Most recently used last.
     sessions: Vec<SessionEntry>,
-    /// Identity seen first in this chat (trust on first use).
+    /// Identity trusted in this chat (trust on first use, then explicit).
     pinned_peer: Option<PeerIdentity>,
+    /// Identity that was trusted before `peer_changed` was raised.
+    #[serde(default)]
+    previous_peer: Option<PeerIdentity>,
     verified: bool,
+    /// A new identity appeared: sending is blocked until the user accepts
+    /// or rejects it.
     peer_changed: bool,
     /// hex(sha256(wire bytes)) -> decrypted result
     history: HashMap<String, Incoming>,
-    history_order: Vec<String>,
+    history_order: VecDeque<String>,
+    /// hex(sha256(wire bytes)) -> Telegram message id it was first seen in
+    /// (incoming only): the same ciphertext in another message is a replay.
+    #[serde(default)]
+    history_ids: HashMap<String, i64>,
 }
 
 struct ChatState {
     sessions: Vec<(Session, PeerIdentity)>,
     file: ChatFile,
+}
+
+impl ChatState {
+    /// Session used for sending: the newest one with the trusted identity.
+    fn active_index(&self) -> Option<usize> {
+        let pinned = self.file.pinned_peer?;
+        self.sessions.iter().rposition(|(_, p)| *p == pinned)
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -125,6 +191,7 @@ pub struct ZkEngine {
     dir: PathBuf,
     vault: Vault,
     account: Account,
+    my_tg_id: i64,
     chats: HashMap<i64, ChatState>,
 }
 
@@ -134,21 +201,52 @@ impl std::fmt::Debug for ZkEngine {
     }
 }
 
+impl Drop for ZkEngine {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        for st in self.chats.values_mut() {
+            for v in st.file.history.values_mut() {
+                match v {
+                    Incoming::Text { text, .. } => text.zeroize(),
+                    Incoming::File { key, .. } => key.zeroize(),
+                    _ => {}
+                }
+            }
+        }
+    }
+}
+
 fn hex32(b: &[u8]) -> String {
     hex::encode(Sha256::digest(b))
 }
 
 fn session_config() -> SessionConfig {
+    // version_2 (full MAC) is still behind vodozemac's experimental feature.
     SessionConfig::version_1()
+}
+
+fn ident_signed(sender_curve: &[u8; 32], receiver_curve: &[u8; 32], sender_tg: i64, receiver_tg: i64) -> Vec<u8> {
+    let mut v = Vec::with_capacity(ACCEPT_CTX.len() + 80);
+    v.extend_from_slice(ACCEPT_CTX);
+    v.extend_from_slice(sender_curve);
+    v.extend_from_slice(receiver_curve);
+    v.extend_from_slice(&sender_tg.to_be_bytes());
+    v.extend_from_slice(&receiver_tg.to_be_bytes());
+    v
 }
 
 impl ZkEngine {
     /// Opens the encrypted ZK store in `dir`, creating a new identity on
     /// first use. A wrong passphrase fails instead of overwriting data.
-    pub fn open(dir: &Path, passphrase: &str) -> Result<Self, String> {
+    /// `my_tg_id` is the Telegram user id of this account.
+    pub fn open(dir: &Path, passphrase: &str, my_tg_id: i64) -> Result<Self, String> {
         fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-        let vault = Vault::unlock(&dir.join("key.bin"), passphrase)?;
+        let key_path = dir.join("key.bin");
         let id_path = dir.join("identity.bin");
+        if !key_path.exists() && id_path.exists() {
+            return Err("ZK key file is missing: refusing to create a new one over existing data".into());
+        }
+        let vault = Vault::unlock(&key_path, passphrase)?;
         let account = match vault.read_file(&id_path, "identity")? {
             Some(data) => {
                 let pickle: AccountPickle =
@@ -157,7 +255,9 @@ impl ZkEngine {
             }
             None => {
                 let account = Account::new();
-                let data = serde_json::to_vec(&account.pickle()).map_err(|e| e.to_string())?;
+                let data = zeroize::Zeroizing::new(
+                    serde_json::to_vec(&account.pickle()).map_err(|e| e.to_string())?,
+                );
                 vault.write_file(&id_path, "identity", &data)?;
                 account
             }
@@ -166,21 +266,39 @@ impl ZkEngine {
             dir: dir.to_path_buf(),
             vault,
             account,
+            my_tg_id,
             chats: HashMap::new(),
         })
+    }
+
+    pub fn set_my_tg_id(&mut self, id: i64) {
+        self.my_tg_id = id;
     }
 
     pub fn identity(&self) -> PeerIdentity {
         PeerIdentity {
             ed25519: *self.account.ed25519_key().as_bytes(),
             curve25519: self.account.curve25519_key().to_bytes(),
+            tg_id: self.my_tg_id,
         }
     }
 
     fn save_account(&self) -> Result<(), String> {
-        let data = serde_json::to_vec(&self.account.pickle()).map_err(|e| e.to_string())?;
+        let data = zeroize::Zeroizing::new(
+            serde_json::to_vec(&self.account.pickle()).map_err(|e| e.to_string())?,
+        );
         self.vault
             .write_file(&self.dir.join("identity.bin"), "identity", &data)
+    }
+
+    /// Drops in-memory account changes (e.g. a one-time key consumed by a
+    /// pre-key message that then failed verification).
+    fn reload_account(&mut self) -> Result<(), String> {
+        if let Some(data) = self.vault.read_file(&self.dir.join("identity.bin"), "identity")? {
+            let pickle: AccountPickle = serde_json::from_slice(&data).map_err(|e| e.to_string())?;
+            self.account = Account::from_pickle(pickle);
+        }
+        Ok(())
     }
 
     fn chat_path(&self, chat_id: i64) -> PathBuf {
@@ -199,7 +317,7 @@ impl ZkEngine {
                 .iter()
                 .map(|s| {
                     // SessionPickle is not Clone: round-trip through JSON.
-                    let json = serde_json::to_vec(&s.pickle).unwrap_or_default();
+                    let json = zeroize::Zeroizing::new(serde_json::to_vec(&s.pickle).unwrap_or_default());
                     serde_json::from_slice::<SessionPickle>(&json)
                         .map(|p| (Session::from_pickle(p), s.peer))
                         .map_err(|e| e.to_string())
@@ -222,18 +340,21 @@ impl ZkEngine {
                 peer: *p,
             })
             .collect();
-        let data = serde_json::to_vec(&st.file).map_err(|e| e.to_string())?;
+        let data = zeroize::Zeroizing::new(serde_json::to_vec(&st.file).map_err(|e| e.to_string())?);
+        st.file.sessions.clear();
         self.vault.write_file(&path, &label, &data)
     }
 
     fn remember(st: &mut ChatState, key: String, value: Incoming) {
         if !st.file.history.contains_key(&key) {
-            st.file.history_order.push(key.clone());
+            st.file.history_order.push_back(key.clone());
         }
         st.file.history.insert(key, value);
         while st.file.history_order.len() > MAX_HISTORY_PER_CHAT {
-            let old = st.file.history_order.remove(0);
-            st.file.history.remove(&old);
+            if let Some(old) = st.file.history_order.pop_front() {
+                st.file.history.remove(&old);
+                st.file.history_ids.remove(&old);
+            }
         }
     }
 
@@ -241,14 +362,17 @@ impl ZkEngine {
         match st.file.pinned_peer {
             None => st.file.pinned_peer = Some(peer),
             Some(p) if p != peer => {
-                // New identity in this chat: possible MITM or reinstall.
+                // New identity in this chat: reinstall or an attack. Keep
+                // the old sessions, block sending until the user decides.
+                if !st.file.peer_changed {
+                    st.file.previous_peer = Some(p);
+                }
                 st.file.pinned_peer = Some(peer);
                 st.file.verified = false;
                 st.file.peer_changed = true;
             }
             _ => {}
         }
-        st.sessions.retain(|(_, p)| *p == peer);
         st.sessions.push((session, peer));
         while st.sessions.len() > MAX_SESSIONS_PER_CHAT {
             st.sessions.remove(0);
@@ -285,11 +409,7 @@ impl ZkEngine {
 
     fn ident_block(&self, peer: &PeerIdentity) -> Vec<u8> {
         let me = self.identity();
-        let mut signed = Vec::new();
-        signed.extend_from_slice(ACCEPT_CTX);
-        signed.extend_from_slice(&me.curve25519);
-        signed.extend_from_slice(&peer.curve25519);
-        let sig = self.account.sign(&signed);
+        let sig = self.account.sign(&ident_signed(&me.curve25519, &peer.curve25519, me.tg_id, peer.tg_id));
         let mut b = Vec::with_capacity(IDENT_LEN);
         b.extend_from_slice(&me.ed25519);
         b.extend_from_slice(&sig.to_bytes());
@@ -297,15 +417,16 @@ impl ZkEngine {
     }
 
     fn encrypt_inner(&mut self, chat_id: i64, kind: u8, data: &[u8]) -> Result<String, String> {
-        let (needs_ident, peer) = {
+        let (idx, needs_ident, peer) = {
             let st = self.chat(chat_id)?;
-            let (session, peer) = st
-                .sessions
-                .last()
-                .ok_or("no active secure session in this chat")?;
-            (!session.has_received_message(), *peer)
+            if st.file.peer_changed && kind != K_ACCEPT && kind != K_END {
+                return Err("Ключ собеседника изменился. Откройте щит и сверьте код безопасности.".into());
+            }
+            let idx = st.active_index().ok_or("no active secure session in this chat")?;
+            let (session, peer) = &st.sessions[idx];
+            (idx, !session.has_received_message(), *peer)
         };
-        let mut plain = Vec::with_capacity(1 + IDENT_LEN + data.len());
+        let mut plain = zeroize::Zeroizing::new(Vec::with_capacity(1 + IDENT_LEN + data.len()));
         if needs_ident {
             plain.push(kind | K_IDENT);
             plain.extend_from_slice(&self.ident_block(&peer));
@@ -314,8 +435,7 @@ impl ZkEngine {
         }
         plain.extend_from_slice(data);
         let st = self.chat(chat_id)?;
-        let (session, _) = st.sessions.last_mut().unwrap();
-        let msg = session.encrypt(&plain).map_err(|e| e.to_string())?;
+        let msg = st.sessions[idx].0.encrypt(&*plain).map_err(|e| e.to_string())?;
         let (t, body) = msg.to_parts();
         let wire_type = if t == 0 { T_PREKEY } else { T_MESSAGE };
         let (text, bytes) = Self::wrap(wire_type, &body);
@@ -325,6 +445,11 @@ impl ZkEngine {
                 outgoing: true,
             },
             K_ACCEPT => Incoming::Started { outgoing: true },
+            K_FILE if data.len() == 33 => Incoming::File {
+                key: data[1..].try_into().unwrap(),
+                flags: data[0],
+                outgoing: true,
+            },
             _ => Incoming::Ended { outgoing: true },
         };
         Self::remember(st, hex32(&bytes), value);
@@ -333,8 +458,12 @@ impl ZkEngine {
 
     // ---------- public API ----------
 
-    /// Builds an invitation. It carries only public keys.
+    /// Builds an invitation. It carries only public keys, signed together
+    /// with this Telegram account id.
     pub fn create_invite(&mut self) -> Result<String, String> {
+        if self.my_tg_id == 0 {
+            return Err("Telegram account id is not known yet".into());
+        }
         self.account.generate_one_time_keys(1);
         let otk = *self
             .account
@@ -345,54 +474,62 @@ impl ZkEngine {
         self.account.mark_keys_as_published();
         self.save_account()?;
         let id = self.identity();
-        let mut signed = Vec::new();
-        signed.extend_from_slice(INVITE_CTX);
-        signed.extend_from_slice(&id.curve25519);
-        signed.extend_from_slice(otk.as_bytes());
-        let sig = self.account.sign(&signed);
-        let mut payload = Vec::with_capacity(160);
+        let sig = self.account.sign(&Self::invite_signed(&id.curve25519, otk.as_bytes(), id.tg_id));
+        let mut payload = Vec::with_capacity(INVITE_LEN);
         payload.extend_from_slice(&id.ed25519);
         payload.extend_from_slice(&id.curve25519);
         payload.extend_from_slice(otk.as_bytes());
+        payload.extend_from_slice(&id.tg_id.to_be_bytes());
         payload.extend_from_slice(&sig.to_bytes());
         Ok(Self::wrap(T_INVITE, &payload).0)
     }
 
+    fn invite_signed(curve: &[u8; 32], otk: &[u8; 32], tg: i64) -> Vec<u8> {
+        let mut v = Vec::with_capacity(INVITE_CTX.len() + 72);
+        v.extend_from_slice(INVITE_CTX);
+        v.extend_from_slice(curve);
+        v.extend_from_slice(otk);
+        v.extend_from_slice(&tg.to_be_bytes());
+        v
+    }
+
     fn parse_invite(payload: &[u8]) -> Result<(PeerIdentity, Curve25519PublicKey), String> {
-        if payload.len() != 160 {
+        if payload.len() != INVITE_LEN {
             return Err("bad invite".into());
         }
         let ed: [u8; 32] = payload[..32].try_into().unwrap();
         let curve: [u8; 32] = payload[32..64].try_into().unwrap();
         let otk: [u8; 32] = payload[64..96].try_into().unwrap();
-        let sig = Ed25519Signature::from_slice(&payload[96..]).map_err(|e| e.to_string())?;
+        let tg = i64::from_be_bytes(payload[96..104].try_into().unwrap());
+        let sig = Ed25519Signature::from_slice(&payload[104..]).map_err(|e| e.to_string())?;
         let ed_key = Ed25519PublicKey::from_slice(&ed).map_err(|e| e.to_string())?;
-        let mut signed = Vec::new();
-        signed.extend_from_slice(INVITE_CTX);
-        signed.extend_from_slice(&curve);
-        signed.extend_from_slice(&otk);
         ed_key
-            .verify(&signed, &sig)
+            .verify(&Self::invite_signed(&curve, &otk, tg), &sig)
             .map_err(|_| "invite signature is invalid".to_string())?;
         Ok((
             PeerIdentity {
                 ed25519: ed,
                 curve25519: curve,
+                tg_id: tg,
             },
             Curve25519PublicKey::from_bytes(otk),
         ))
     }
 
-    /// Accepts an invitation received in `chat_id`; returns the wire text
-    /// to send back (encrypted ACCEPT, an Olm pre-key message).
-    pub fn accept_invite(&mut self, chat_id: i64, invite_text: &str) -> Result<String, String> {
+    /// Accepts an invitation received in `env.chat_id` from `env.sender_id`;
+    /// returns the wire text to send back (encrypted ACCEPT).
+    pub fn accept_invite(&mut self, env: &Envelope, invite_text: &str) -> Result<String, String> {
         let (t, payload) = Self::unwrap(invite_text).ok_or("not an invitation")?;
         if t != T_INVITE {
             return Err("not an invitation".into());
         }
         let (peer, otk) = Self::parse_invite(&payload)?;
-        if peer == self.identity() {
+        let me = self.identity();
+        if env.outgoing || peer.same_keys(&me) || peer.tg_id == me.tg_id {
             return Err("this is your own invitation".into());
+        }
+        if peer.tg_id != env.sender_id {
+            return Err("the invitation was signed by another Telegram account (forwarded?)".into());
         }
         let session = self
             .account
@@ -403,11 +540,11 @@ impl ZkEngine {
             )
             .map_err(|e| e.to_string())?;
         {
-            let st = self.chat(chat_id)?;
+            let st = self.chat(env.chat_id)?;
             Self::add_session(st, session, peer);
         }
-        let text = self.encrypt_inner(chat_id, K_ACCEPT, &[])?;
-        self.save_chat(chat_id)?;
+        let text = self.encrypt_inner(env.chat_id, K_ACCEPT, &[])?;
+        self.save_chat(env.chat_id)?;
         Ok(text)
     }
 
@@ -421,17 +558,57 @@ impl ZkEngine {
         Ok(out)
     }
 
-    /// Ends the session: returns the END notice to send, then forgets keys.
+    /// Encrypts an attachment. Returns (document bytes, caption wire text).
+    /// Needs an answered session: the first messages of a session carry the
+    /// identity block and do not fit into a caption.
+    pub fn encrypt_file(
+        &mut self,
+        chat_id: i64,
+        header: &FileHeader,
+        content: &[u8],
+        flags: u8,
+    ) -> Result<(Vec<u8>, String), String> {
+        {
+            let st = self.chat(chat_id)?;
+            let idx = st.active_index().ok_or("no active secure session in this chat")?;
+            if !st.sessions[idx].0.has_received_message() {
+                return Err("Файлы можно отправлять после первого ответа собеседника в защищённом чате".into());
+            }
+        }
+        let key: [u8; 32] = super::vault::random_bytes();
+        let blob = seal_file(&key, header, content)?;
+        let mut data = zeroize::Zeroizing::new(Vec::with_capacity(33));
+        data.push(flags);
+        data.extend_from_slice(&key);
+        let caption = self.encrypt_inner(chat_id, K_FILE, &data)?;
+        if caption.chars().count() > MAX_CAPTION_CHARS {
+            return Err("caption too long".into());
+        }
+        self.save_chat(chat_id)?;
+        Ok((blob, caption))
+    }
+
+    /// Builds the END notice. Keys are kept until `forget_sessions` is
+    /// called after the notice was actually sent.
     pub fn end_session(&mut self, chat_id: i64) -> Result<String, String> {
         let text = self.encrypt_inner(chat_id, K_END, &[])?;
-        self.chat(chat_id)?.sessions.clear();
         self.save_chat(chat_id)?;
         Ok(text)
     }
 
+    pub fn forget_sessions(&mut self, chat_id: i64) -> Result<(), String> {
+        let st = self.chat(chat_id)?;
+        st.sessions.clear();
+        st.file.peer_changed = false;
+        st.file.previous_peer = None;
+        self.save_chat(chat_id)
+    }
+
     /// Decides what a Telegram text is. Decrypts at most once; later calls
     /// for the same wire bytes are served from the encrypted history.
-    pub fn process(&mut self, chat_id: i64, text: &str, outgoing: bool) -> Incoming {
+    pub fn process(&mut self, env: &Envelope, text: &str) -> Incoming {
+        let chat_id = env.chat_id;
+        let outgoing = env.outgoing;
         if !Self::looks_like_zk(text) {
             return Incoming::NotZk;
         }
@@ -449,7 +626,12 @@ impl ZkEngine {
             let me = self.identity();
             return match Self::parse_invite(&payload) {
                 Ok((peer, _)) => {
-                    let mine = peer == me;
+                    let mine = peer.same_keys(&me);
+                    // An invite must come from the account that signed it.
+                    let sender_ok = if mine || outgoing { peer.tg_id == me.tg_id } else { peer.tg_id == env.sender_id };
+                    if !sender_ok {
+                        return Incoming::Undecryptable { outgoing };
+                    }
                     let accepted = !mine
                         && self
                             .chat(chat_id)
@@ -466,6 +648,21 @@ impl ZkEngine {
 
         if let Ok(st) = self.chat(chat_id) {
             if let Some(v) = st.file.history.get(&key) {
+                // Own ciphertext re-posted as incoming (or the reverse).
+                if v.outgoing() != Some(outgoing) {
+                    return Incoming::Undecryptable { outgoing };
+                }
+                if !outgoing && env.message_id != 0 {
+                    match st.file.history_ids.get(&key) {
+                        Some(id) if *id != env.message_id => {
+                            return Incoming::Undecryptable { outgoing };
+                        }
+                        Some(_) => {}
+                        None => {
+                            st.file.history_ids.insert(key.clone(), env.message_id);
+                        }
+                    }
+                }
                 return v.clone();
             }
         }
@@ -474,8 +671,8 @@ impl ZkEngine {
             return Incoming::Undecryptable { outgoing: true };
         }
         let result = match t {
-            T_PREKEY => self.decrypt_prekey(chat_id, &payload),
-            T_MESSAGE => self.decrypt_normal(chat_id, &payload),
+            T_PREKEY => self.decrypt_prekey(env, &payload),
+            T_MESSAGE => self.decrypt_normal(env, &payload),
             _ => Err("unknown type".into()),
         };
         let value = match result {
@@ -486,6 +683,9 @@ impl ZkEngine {
             }
         };
         if let Ok(st) = self.chat(chat_id) {
+            if env.message_id != 0 {
+                st.file.history_ids.insert(key.clone(), env.message_id);
+            }
             Self::remember(st, key, value.clone());
         }
         if let Err(e) = self.save_chat(chat_id) {
@@ -494,7 +694,8 @@ impl ZkEngine {
         value
     }
 
-    fn decrypt_prekey(&mut self, chat_id: i64, body: &[u8]) -> Result<Incoming, String> {
+    fn decrypt_prekey(&mut self, env: &Envelope, body: &[u8]) -> Result<Incoming, String> {
+        let chat_id = env.chat_id;
         let pre = PreKeyMessage::from_bytes(body).map_err(|e| e.to_string())?;
         let msg = OlmMessage::PreKey(pre.clone());
         // A peer keeps sending pre-key messages until we answer: reuse the
@@ -502,12 +703,15 @@ impl ZkEngine {
         {
             let st = self.chat(chat_id)?;
             let sid = pre.session_id();
-            for (session, peer) in st.sessions.iter_mut() {
-                if session.session_id() == sid {
-                    let peer = *peer;
-                    let plain = session.decrypt(&msg).map_err(|e| e.to_string())?;
-                    return Self::handle_plain(st, peer, &plain, false);
+            if let Some(i) = st.sessions.iter().position(|(s, _)| s.session_id() == sid) {
+                let peer = st.sessions[i].1;
+                if peer.tg_id != env.sender_id {
+                    return Err("pre-key message from another Telegram account".into());
                 }
+                let plain = zeroize::Zeroizing::new(st.sessions[i].0.decrypt(&msg).map_err(|e| e.to_string())?);
+                let s = st.sessions.remove(i);
+                st.sessions.push(s);
+                return Self::handle_plain(st, peer, &plain, false);
             }
         }
         let their_curve = pre.identity_key();
@@ -515,40 +719,65 @@ impl ZkEngine {
             .account
             .create_inbound_session(session_config(), their_curve, &pre)
             .map_err(|e| e.to_string())?;
-        let p = &res.plaintext;
-        if p.is_empty() || p[0] & K_IDENT == 0 || p.len() < 1 + IDENT_LEN {
-            return Err("first message of a session carries no identity".into());
-        }
-        let ed: [u8; 32] = p[1..33].try_into().unwrap();
-        let sig = Ed25519Signature::from_slice(&p[33..1 + IDENT_LEN]).map_err(|e| e.to_string())?;
-        let ed_key = Ed25519PublicKey::from_slice(&ed).map_err(|e| e.to_string())?;
+        let plain = zeroize::Zeroizing::new(res.plaintext);
         let me = self.identity();
-        let mut signed = Vec::new();
-        signed.extend_from_slice(ACCEPT_CTX);
-        signed.extend_from_slice(their_curve.as_bytes());
-        signed.extend_from_slice(&me.curve25519);
-        ed_key
-            .verify(&signed, &sig)
-            .map_err(|_| "accept signature is invalid".to_string())?;
-        let peer = PeerIdentity {
-            ed25519: ed,
-            curve25519: their_curve.to_bytes(),
+        let check = (|| -> Result<PeerIdentity, String> {
+            let p = &plain;
+            if env.sender_id == 0 || env.sender_id == me.tg_id {
+                return Err("pre-key message has no valid sender".into());
+            }
+            if p.is_empty() || p[0] & K_IDENT == 0 || p.len() < 1 + IDENT_LEN {
+                return Err("first message of a session carries no identity".into());
+            }
+            let ed: [u8; 32] = p[1..33].try_into().unwrap();
+            let sig = Ed25519Signature::from_slice(&p[33..1 + IDENT_LEN]).map_err(|e| e.to_string())?;
+            let ed_key = Ed25519PublicKey::from_slice(&ed).map_err(|e| e.to_string())?;
+            ed_key
+                .verify(
+                    &ident_signed(their_curve.as_bytes(), &me.curve25519, env.sender_id, me.tg_id),
+                    &sig,
+                )
+                .map_err(|_| "identity signature is invalid (wrong sender or forwarded)".to_string())?;
+            Ok(PeerIdentity {
+                ed25519: ed,
+                curve25519: their_curve.to_bytes(),
+                tg_id: env.sender_id,
+            })
+        })();
+        let peer = match check {
+            Ok(p) => p,
+            Err(e) => {
+                // vodozemac already removed the one-time key in memory.
+                self.reload_account()?;
+                return Err(e);
+            }
         };
-        // Only now is the one-time key really spent: persist the account.
-        self.save_account()?;
         let st = self.chat(chat_id)?;
         Self::add_session(st, res.session, peer);
-        Self::handle_plain(st, peer, &res.plaintext, false)
+        let value = Self::handle_plain(st, peer, &plain, false)?;
+        // Session first, then the account without the used one-time key:
+        // a crash in between leaves a usable session, never a lost one.
+        self.save_chat(chat_id)?;
+        self.save_account()?;
+        Ok(value)
     }
 
-    fn decrypt_normal(&mut self, chat_id: i64, body: &[u8]) -> Result<Incoming, String> {
+    fn decrypt_normal(&mut self, env: &Envelope, body: &[u8]) -> Result<Incoming, String> {
         let msg = OlmMessage::from_parts(1, body).map_err(|e| e.to_string())?;
-        let st = self.chat(chat_id)?;
+        let st = self.chat(env.chat_id)?;
         let mut last_err = String::from("no session");
         for i in (0..st.sessions.len()).rev() {
             let peer = st.sessions[i].1;
+            if peer.tg_id != env.sender_id {
+                continue;
+            }
             match st.sessions[i].0.decrypt(&msg) {
-                Ok(plain) => return Self::handle_plain(st, peer, &plain, false),
+                Ok(plain) => {
+                    let plain = zeroize::Zeroizing::new(plain);
+                    let s = st.sessions.remove(i);
+                    st.sessions.push(s);
+                    return Self::handle_plain(st, peer, &plain, false);
+                }
                 Err(e) => last_err = e.to_string(),
             }
         }
@@ -575,6 +804,16 @@ impl ZkEngine {
                 outgoing,
             }),
             K_ACCEPT => Ok(Incoming::Started { outgoing }),
+            K_FILE => {
+                if body.len() != 33 {
+                    return Err("bad file key".into());
+                }
+                Ok(Incoming::File {
+                    key: body[1..].try_into().unwrap(),
+                    flags: body[0],
+                    outgoing,
+                })
+            }
             K_END => {
                 st.sessions.retain(|(_, p)| *p != peer);
                 Ok(Incoming::Ended { outgoing })
@@ -586,7 +825,7 @@ impl ZkEngine {
     pub fn status(&mut self, chat_id: i64) -> Result<ChatStatus, String> {
         let me = self.identity();
         let st = self.chat(chat_id)?;
-        let active = st.sessions.last().map(|(_, p)| *p);
+        let active = st.active_index().map(|i| st.sessions[i].1);
         Ok(ChatStatus {
             state: if active.is_some() { "active" } else { "none" }.into(),
             safety_number: active.map(|p| safety_number(&me, &p)),
@@ -596,27 +835,137 @@ impl ZkEngine {
                 .file
                 .history
                 .values()
-                .any(|v| matches!(v, Incoming::Text { .. })),
+                .any(|v| matches!(v, Incoming::Text { .. } | Incoming::File { .. })),
         })
     }
 
+    /// Marks the current identity as verified (codes compared). Also
+    /// accepts a changed identity.
     pub fn set_verified(&mut self, chat_id: i64, verified: bool) -> Result<(), String> {
         let st = self.chat(chat_id)?;
-        if st.sessions.is_empty() {
+        if st.active_index().is_none() {
             return Err("no active secure session".into());
         }
-        st.file.verified = verified;
         if verified {
-            st.file.peer_changed = false;
+            Self::accept_pinned(st);
         }
+        st.file.verified = verified;
         self.save_chat(chat_id)
     }
 
-    /// Changes the passphrase: only the wrapped data key is rewritten
-    /// (one atomic file write), so a crash cannot leave data unreadable.
-    pub fn rekey(&mut self, new_passphrase: &str) -> Result<(), String> {
-        self.vault.wrap_to(&self.dir.join("key.bin"), new_passphrase)
+    fn accept_pinned(st: &mut ChatState) {
+        if let Some(p) = st.file.pinned_peer {
+            st.sessions.retain(|(_, q)| *q == p);
+        }
+        st.file.peer_changed = false;
+        st.file.previous_peer = None;
     }
+
+    /// The user trusts the new identity without comparing codes.
+    pub fn accept_new_peer(&mut self, chat_id: i64) -> Result<(), String> {
+        let st = self.chat(chat_id)?;
+        Self::accept_pinned(st);
+        st.file.verified = false;
+        self.save_chat(chat_id)
+    }
+
+    /// The user rejects the new identity: its sessions are dropped and the
+    /// previous identity becomes active again.
+    pub fn reject_new_peer(&mut self, chat_id: i64) -> Result<(), String> {
+        let st = self.chat(chat_id)?;
+        if !st.file.peer_changed {
+            return Ok(());
+        }
+        if let Some(bad) = st.file.pinned_peer {
+            st.sessions.retain(|(_, q)| *q != bad);
+        }
+        st.file.pinned_peer = st.file.previous_peer.take();
+        st.file.peer_changed = false;
+        self.save_chat(chat_id)
+    }
+
+    /// Changes the passphrase in one step (tests, tools).
+    #[cfg(test)]
+    pub fn rekey(&mut self, new_passphrase: &str) -> Result<(), String> {
+        self.prepare_rekey(new_passphrase)?;
+        self.commit_rekey()
+    }
+
+    /// Two-phase passphrase change, so the PGP key can be switched in
+    /// between: until `commit_rekey`, both passphrases open the store.
+    pub fn prepare_rekey(&self, new_passphrase: &str) -> Result<(), String> {
+        self.vault.prepare_rewrap(&self.dir.join("key.bin"), new_passphrase)
+    }
+
+    pub fn commit_rekey(&self) -> Result<(), String> {
+        Vault::commit_rewrap(&self.dir.join("key.bin"))
+    }
+
+    pub fn abort_rekey(&self) {
+        Vault::abort_rewrap(&self.dir.join("key.bin"))
+    }
+
+    /// Drops decrypted history of a chat from memory (kept on disk).
+    pub fn unload_chat(&mut self, chat_id: i64) {
+        if let Some(mut st) = self.chats.remove(&chat_id) {
+            use zeroize::Zeroize;
+            for v in st.file.history.values_mut() {
+                if let Incoming::Text { text, .. } = v {
+                    text.zeroize();
+                }
+            }
+        }
+    }
+}
+
+/// Metadata stored inside the encrypted attachment, never in Telegram.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FileHeader {
+    pub name: String,
+    pub mime: String,
+    pub caption: Option<String>,
+}
+
+pub fn seal_file(key: &[u8; 32], header: &FileHeader, content: &[u8]) -> Result<Vec<u8>, String> {
+    use chacha20poly1305::aead::{Aead, KeyInit, Payload};
+    use chacha20poly1305::{XChaCha20Poly1305, XNonce};
+    let h = serde_json::to_vec(header).map_err(|e| e.to_string())?;
+    let mut plain = zeroize::Zeroizing::new(Vec::with_capacity(4 + h.len() + content.len()));
+    plain.extend_from_slice(&(h.len() as u32).to_be_bytes());
+    plain.extend_from_slice(&h);
+    plain.extend_from_slice(content);
+    let nonce: [u8; 24] = super::vault::random_bytes();
+    let ct = XChaCha20Poly1305::new(key.into())
+        .encrypt(XNonce::from_slice(&nonce), Payload { msg: &plain, aad: FILE_AAD })
+        .map_err(|_| "encryption failed".to_string())?;
+    let mut out = Vec::with_capacity(FILE_MAGIC.len() + 24 + ct.len());
+    out.extend_from_slice(FILE_MAGIC);
+    out.extend_from_slice(&nonce);
+    out.extend_from_slice(&ct);
+    Ok(out)
+}
+
+pub fn open_file(key: &[u8; 32], blob: &[u8]) -> Result<(FileHeader, zeroize::Zeroizing<Vec<u8>>), String> {
+    use chacha20poly1305::aead::{Aead, KeyInit, Payload};
+    use chacha20poly1305::{XChaCha20Poly1305, XNonce};
+    let n = FILE_MAGIC.len();
+    if blob.len() < n + 24 || &blob[..n] != FILE_MAGIC {
+        return Err("not an encrypted attachment".into());
+    }
+    let plain = zeroize::Zeroizing::new(
+        XChaCha20Poly1305::new(key.into())
+            .decrypt(XNonce::from_slice(&blob[n..n + 24]), Payload { msg: &blob[n + 24..], aad: FILE_AAD })
+            .map_err(|_| "attachment is damaged or the key is wrong".to_string())?,
+    );
+    if plain.len() < 4 {
+        return Err("bad attachment".into());
+    }
+    let hl = u32::from_be_bytes(plain[..4].try_into().unwrap()) as usize;
+    if plain.len() < 4 + hl {
+        return Err("bad attachment".into());
+    }
+    let header: FileHeader = serde_json::from_slice(&plain[4..4 + hl]).map_err(|e| e.to_string())?;
+    Ok((header, zeroize::Zeroizing::new(plain[4 + hl..].to_vec())))
 }
 
 /// 60-digit number both sides compare over another channel (Signal-style).
@@ -659,6 +1008,9 @@ pub fn split_utf8(text: &str, max: usize) -> Vec<&str> {
 mod tests {
     use super::*;
 
+    const A: i64 = 100;
+    const B: i64 = 200;
+
     fn tmp(name: &str) -> PathBuf {
         let d = std::env::temp_dir().join(format!(
             "bhzk-{}-{}-{}",
@@ -670,29 +1022,37 @@ mod tests {
         d
     }
 
-    // Alice and Bob talk in "chat 1" on their side (chat ids differ in
-    // reality; each engine uses its own id for the peer).
+    fn env(sender: i64, me: i64) -> Envelope {
+        Envelope { chat_id: 1, message_id: 0, sender_id: sender, outgoing: sender == me }
+    }
+    // a's view of a message sent by `sender`
+    fn on_a(sender: i64) -> Envelope { env(sender, A) }
+    fn on_b(sender: i64) -> Envelope { env(sender, B) }
+
     fn pair() -> (ZkEngine, ZkEngine, PathBuf, PathBuf) {
         let (da, db) = (tmp("a"), tmp("b"));
-        let a = ZkEngine::open(&da, "alice-pass").unwrap();
-        let b = ZkEngine::open(&db, "bob-pass").unwrap();
+        let a = ZkEngine::open(&da, "alice-pass", A).unwrap();
+        let b = ZkEngine::open(&db, "bob-pass", B).unwrap();
         (a, b, da, db)
     }
 
-    fn handshake(a: &mut ZkEngine, b: &mut ZkEngine) {
+    fn handshake_with(a: &mut ZkEngine, b: &mut ZkEngine, b_id: i64) {
         let invite = a.create_invite().unwrap();
-        assert_eq!(
-            b.process(1, &invite, false),
-            Incoming::Invite { outgoing: false, accepted: false }
-        );
-        assert_eq!(
-            a.process(1, &invite, true),
-            Incoming::Invite { outgoing: true, accepted: false }
-        );
-        let accept = b.accept_invite(1, &invite).unwrap();
-        assert_eq!(b.process(1, &invite, false), Incoming::Invite { outgoing: false, accepted: true });
-        assert_eq!(a.process(1, &accept, false), Incoming::Started { outgoing: false });
-        assert_eq!(b.process(1, &accept, true), Incoming::Started { outgoing: true });
+        let eb = env(A, b_id);
+        assert_eq!(b.process(&eb, &invite), Incoming::Invite { outgoing: false, accepted: false });
+        assert_eq!(a.process(&on_a(A), &invite), Incoming::Invite { outgoing: true, accepted: false });
+        let accept = b.accept_invite(&eb, &invite).unwrap();
+        assert_eq!(b.process(&eb, &invite), Incoming::Invite { outgoing: false, accepted: true });
+        assert_eq!(a.process(&on_a(b_id), &accept), Incoming::Started { outgoing: false });
+        assert_eq!(b.process(&env(b_id, b_id), &accept), Incoming::Started { outgoing: true });
+    }
+
+    fn handshake(a: &mut ZkEngine, b: &mut ZkEngine) {
+        handshake_with(a, b, B)
+    }
+
+    fn text(t: &str, outgoing: bool) -> Incoming {
+        Incoming::Text { text: t.into(), outgoing }
     }
 
     #[test]
@@ -706,27 +1066,23 @@ mod tests {
         assert_eq!(sa.safety_number.as_ref().unwrap().len(), 12 * 5 + 11);
         assert!(!sa.has_history);
 
-        // Bob talks first (still pre-key messages), then Alice, then both.
         let m1 = b.encrypt_text(1, "привет").unwrap();
         let m2 = b.encrypt_text(1, "второе").unwrap();
         assert!(m1[0].split(' ').all(|w| wordcoder::decode(w).is_some()));
-        // out of order delivery
-        assert_eq!(a.process(1, &m2[0], false), Incoming::Text { text: "второе".into(), outgoing: false });
-        assert_eq!(a.process(1, &m1[0], false), Incoming::Text { text: "привет".into(), outgoing: false });
+        assert_eq!(a.process(&on_a(B), &m2[0]), text("второе", false));
+        assert_eq!(a.process(&on_a(B), &m1[0]), text("привет", false));
         let r = a.encrypt_text(1, "hi bob").unwrap();
-        assert_eq!(b.process(1, &r[0], false), Incoming::Text { text: "hi bob".into(), outgoing: false });
+        assert_eq!(b.process(&on_b(A), &r[0]), text("hi bob", false));
         for i in 0..5 {
             let x = a.encrypt_text(1, &format!("a{}", i)).unwrap();
             let y = b.encrypt_text(1, &format!("b{}", i)).unwrap();
-            assert_eq!(b.process(1, &x[0], false), Incoming::Text { text: format!("a{}", i), outgoing: false });
-            assert_eq!(a.process(1, &y[0], false), Incoming::Text { text: format!("b{}", i), outgoing: false });
+            assert_eq!(b.process(&on_b(A), &x[0]), text(&format!("a{}", i), false));
+            assert_eq!(a.process(&on_a(B), &y[0]), text(&format!("b{}", i), false));
         }
-        // re-reading history: served from cache, own messages readable
-        assert_eq!(a.process(1, &m1[0], false), Incoming::Text { text: "привет".into(), outgoing: false });
-        assert_eq!(b.process(1, &m1[0], true), Incoming::Text { text: "привет".into(), outgoing: true });
+        assert_eq!(a.process(&on_a(B), &m1[0]), text("привет", false));
+        assert_eq!(b.process(&on_b(B), &m1[0]), text("привет", true));
         assert!(a.status(1).unwrap().has_history);
-        // normal text untouched
-        assert_eq!(a.process(1, "обычное сообщение", false), Incoming::NotZk);
+        assert_eq!(a.process(&on_a(B), "обычное сообщение"), Incoming::NotZk);
     }
 
     #[test]
@@ -734,15 +1090,23 @@ mod tests {
         let (mut a, mut b, da, db) = pair();
         handshake(&mut a, &mut b);
         let m = b.encrypt_text(1, "до перезапуска").unwrap();
-        assert!(matches!(a.process(1, &m[0], false), Incoming::Text { .. }));
+        assert!(matches!(a.process(&on_a(B), &m[0]), Incoming::Text { .. }));
         drop(a);
         drop(b);
-        assert!(ZkEngine::open(&da, "wrong").is_err());
-        let mut a = ZkEngine::open(&da, "alice-pass").unwrap();
-        let mut b = ZkEngine::open(&db, "bob-pass").unwrap();
-        assert_eq!(a.process(1, &m[0], false), Incoming::Text { text: "до перезапуска".into(), outgoing: false });
+        assert!(ZkEngine::open(&da, "wrong", A).is_err());
+        let mut a = ZkEngine::open(&da, "alice-pass", A).unwrap();
+        let mut b = ZkEngine::open(&db, "bob-pass", B).unwrap();
+        assert_eq!(a.process(&on_a(B), &m[0]), text("до перезапуска", false));
         let r = a.encrypt_text(1, "после").unwrap();
-        assert_eq!(b.process(1, &r[0], false), Incoming::Text { text: "после".into(), outgoing: false });
+        assert_eq!(b.process(&on_b(A), &r[0]), text("после", false));
+    }
+
+    #[test]
+    fn missing_key_file_is_not_silently_recreated() {
+        let d = tmp("k");
+        drop(ZkEngine::open(&d, "p", A).unwrap());
+        fs::remove_file(d.join("key.bin")).unwrap();
+        assert!(ZkEngine::open(&d, "p", A).is_err());
     }
 
     #[test]
@@ -750,7 +1114,7 @@ mod tests {
         let (mut a, mut b, da, _) = pair();
         handshake(&mut a, &mut b);
         let m = b.encrypt_text(1, "SUPERSECRETWORD").unwrap();
-        a.process(1, &m[0], false);
+        a.process(&on_a(B), &m[0]);
         for e in fs::read_dir(&da).unwrap() {
             let data = fs::read(e.unwrap().path()).unwrap();
             assert!(!String::from_utf8_lossy(&data).contains("SUPERSECRETWORD"));
@@ -766,49 +1130,97 @@ mod tests {
         let n = bytes.len();
         bytes[n - 1] ^= 1;
         let bad = wordcoder::encode(&bytes);
-        assert_eq!(a.process(1, &bad, false), Incoming::Undecryptable { outgoing: false });
-        // Eve, who has never shaken hands, cannot read it
-        let mut eve = ZkEngine::open(&tmp("e"), "eve").unwrap();
-        assert_eq!(eve.process(1, &m[0], false), Incoming::Undecryptable { outgoing: false });
-        // forged invite signature
+        assert_eq!(a.process(&on_a(B), &bad), Incoming::Undecryptable { outgoing: false });
+        let mut eve = ZkEngine::open(&tmp("e"), "eve", 300).unwrap();
+        assert_eq!(eve.process(&env(B, 300), &m[0]), Incoming::Undecryptable { outgoing: false });
         let inv = a.create_invite().unwrap();
         let mut ib = wordcoder::decode(&inv).unwrap();
         ib[10] ^= 1;
-        assert!(b.accept_invite(2, &wordcoder::encode(&ib)).is_err());
+        assert!(b.accept_invite(&on_b(A), &wordcoder::encode(&ib)).is_err());
     }
 
     #[test]
-    fn key_change_is_flagged_and_end_session_works() {
+    fn forwarded_invite_and_relayed_accept_are_rejected() {
+        // Mallory (300) forwards Alice's invite to Bob as if it were his.
+        let (mut a, mut b, _, _) = pair();
+        let invite = a.create_invite().unwrap();
+        let from_mallory = env(300, B);
+        assert_eq!(b.process(&from_mallory, &invite), Incoming::Undecryptable { outgoing: false });
+        assert!(b.accept_invite(&from_mallory, &invite).is_err());
+        // Bob accepts the genuine invite; Mallory relays Bob's ACCEPT to Alice.
+        let accept = b.accept_invite(&on_b(A), &invite).unwrap();
+        assert_eq!(a.process(&on_a(300), &accept), Incoming::Undecryptable { outgoing: false });
+        // the one-time key was not burned: the genuine ACCEPT still works
+        assert_eq!(a.process(&on_a(B), &accept), Incoming::Started { outgoing: false });
+        // and messages relayed by Mallory are ignored
+        let m = b.encrypt_text(1, "secret").unwrap();
+        assert_eq!(a.process(&on_a(300), &m[0]), Incoming::Undecryptable { outgoing: false });
+        assert_eq!(a.process(&on_a(B), &m[0]), text("secret", false));
+    }
+
+    #[test]
+    fn replays_and_spoofed_direction_are_rejected() {
+        let (mut a, mut b, _, _) = pair();
+        handshake(&mut a, &mut b);
+        let m = b.encrypt_text(1, "да").unwrap();
+        let e1 = Envelope { chat_id: 1, message_id: 10, sender_id: B, outgoing: false };
+        assert_eq!(a.process(&e1, &m[0]), text("да", false));
+        assert_eq!(a.process(&e1, &m[0]), text("да", false)); // reload of the same message
+        let e2 = Envelope { message_id: 11, ..e1 };
+        assert_eq!(a.process(&e2, &m[0]), Incoming::Undecryptable { outgoing: false });
+        // Alice's own ciphertext re-posted as if Bob sent it
+        let mine = a.encrypt_text(1, "моё").unwrap();
+        assert_eq!(a.process(&on_a(B), &mine[0]), Incoming::Undecryptable { outgoing: false });
+    }
+
+    #[test]
+    fn key_change_blocks_sending_until_user_decides() {
         let (mut a, mut b, _, _) = pair();
         handshake(&mut a, &mut b);
         a.set_verified(1, true).unwrap();
-        assert!(a.status(1).unwrap().verified);
+        let sn_old = a.status(1).unwrap().safety_number;
         // Bob "reinstalls": new identity in the same chat
-        let mut b2 = ZkEngine::open(&tmp("b2"), "bob2").unwrap();
+        let mut b2 = ZkEngine::open(&tmp("b2"), "bob2", B).unwrap();
         handshake(&mut a, &mut b2);
         let st = a.status(1).unwrap();
         assert!(st.peer_changed);
         assert!(!st.verified);
-        let end = a.end_session(1).unwrap();
-        assert_eq!(b2.process(1, &end, false), Incoming::Ended { outgoing: false });
-        assert_eq!(a.status(1).unwrap().state, "none");
-        assert_eq!(b2.status(1).unwrap().state, "none");
+        assert_ne!(st.safety_number, sn_old);
+        assert!(a.encrypt_text(1, "x").is_err(), "sending must be blocked");
+        // reject: back to old Bob, who still works
+        a.reject_new_peer(1).unwrap();
+        assert_eq!(a.status(1).unwrap().safety_number, sn_old);
+        let t = a.encrypt_text(1, "old bob").unwrap();
+        assert_eq!(b.process(&on_b(A), &t[0]), text("old bob", false));
+        // new identity again, this time accepted after comparing codes
+        let mut b3 = ZkEngine::open(&tmp("b3"), "bob3", B).unwrap();
+        handshake(&mut a, &mut b3);
         assert!(a.encrypt_text(1, "x").is_err());
-        drop(b);
+        a.set_verified(1, true).unwrap();
+        let t = a.encrypt_text(1, "new bob").unwrap();
+        assert_eq!(b3.process(&on_b(A), &t[0]), text("new bob", false));
+        // end session: keys kept until forget_sessions
+        let end = a.end_session(1).unwrap();
+        assert_eq!(a.status(1).unwrap().state, "active");
+        a.forget_sessions(1).unwrap();
+        assert_eq!(b3.process(&on_b(A), &end), Incoming::Ended { outgoing: false });
+        assert_eq!(a.status(1).unwrap().state, "none");
+        assert_eq!(b3.status(1).unwrap().state, "none");
+        assert!(a.encrypt_text(1, "x").is_err());
     }
 
     #[test]
     fn long_text_is_chunked_within_telegram_limit() {
         let (mut a, mut b, _, _) = pair();
         handshake(&mut a, &mut b);
-        let long: String = "щ".repeat(1500); // 3000 bytes
+        let long: String = "щ".repeat(1500);
         let parts = b.encrypt_text(1, &long).unwrap();
         assert!(parts.len() >= 8);
         let mut joined = String::new();
         for p in &parts {
             assert!(p.chars().count() <= 4096, "{} chars", p.chars().count());
             assert!(wordcoder::decode(p).unwrap().len() <= MAX_WIRE_BYTES);
-            if let Incoming::Text { text, .. } = a.process(1, p, false) {
+            if let Incoming::Text { text, .. } = a.process(&on_a(B), p) {
                 joined.push_str(&text);
             }
         }
@@ -817,15 +1229,41 @@ mod tests {
 
     #[test]
     fn text_arriving_before_accept_still_opens_session() {
-        // Chat history is loaded newest first: the inviter may see Bob's
-        // first text before his ACCEPT.
         let (mut a, mut b, _, _) = pair();
         let invite = a.create_invite().unwrap();
-        let accept = b.accept_invite(1, &invite).unwrap();
+        let accept = b.accept_invite(&on_b(A), &invite).unwrap();
         let t = b.encrypt_text(1, "first").unwrap();
-        assert_eq!(a.process(1, &t[0], false), Incoming::Text { text: "first".into(), outgoing: false });
-        assert_eq!(a.process(1, &accept, false), Incoming::Started { outgoing: false });
+        assert_eq!(a.process(&on_a(B), &t[0]), text("first", false));
+        assert_eq!(a.process(&on_a(B), &accept), Incoming::Started { outgoing: false });
         assert_eq!(a.status(1).unwrap().state, "active");
+    }
+
+    #[test]
+    fn files_roundtrip_and_fit_caption() {
+        let (mut a, mut b, _, _) = pair();
+        handshake(&mut a, &mut b);
+        let h = FileHeader { name: "фото.jpg".into(), mime: "image/jpeg".into(), caption: Some("подпись".into()) };
+        assert!(b.encrypt_file(1, &h, b"x", 0).is_err());
+        let t = a.encrypt_text(1, "ping").unwrap();
+        b.process(&on_b(A), &t[0]);
+        let content = vec![7u8; 100_000];
+        for i in 0..20 {
+            let (blob, caption) = b.encrypt_file(1, &h, &content, FILE_FLAG_VOICE).unwrap();
+            assert!(caption.chars().count() <= MAX_CAPTION_CHARS, "{}", caption.chars().count());
+            assert!(!blob.windows(8).any(|w| w == "фото".as_bytes()));
+            let Incoming::File { key, flags, outgoing } = a.process(&on_a(B), &caption) else {
+                panic!("expected file at {}", i)
+            };
+            assert_eq!((flags, outgoing), (FILE_FLAG_VOICE, false));
+            let (hh, data) = open_file(&key, &blob).unwrap();
+            assert_eq!(hh, h);
+            assert_eq!(&data[..], &content[..]);
+            assert!(matches!(b.process(&on_b(B), &caption), Incoming::File { outgoing: true, .. }));
+            let mut bad = blob.clone();
+            let l = bad.len();
+            bad[l - 1] ^= 1;
+            assert!(open_file(&key, &bad).is_err());
+        }
     }
 
     #[test]
@@ -833,12 +1271,12 @@ mod tests {
         let (mut a, mut b, da, _) = pair();
         handshake(&mut a, &mut b);
         let m = b.encrypt_text(1, "keep").unwrap();
-        a.process(1, &m[0], false);
+        a.process(&on_a(B), &m[0]);
         a.rekey("new-pass").unwrap();
         drop(a);
-        assert!(ZkEngine::open(&da, "alice-pass").is_err());
-        let mut a = ZkEngine::open(&da, "new-pass").unwrap();
-        assert_eq!(a.process(1, &m[0], false), Incoming::Text { text: "keep".into(), outgoing: false });
+        assert!(ZkEngine::open(&da, "alice-pass", A).is_err());
+        let mut a = ZkEngine::open(&da, "new-pass", A).unwrap();
+        assert_eq!(a.process(&on_a(B), &m[0]), text("keep", false));
     }
 
     #[test]

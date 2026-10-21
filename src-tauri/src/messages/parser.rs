@@ -71,7 +71,7 @@ fn parse_content<R: tauri::Runtime>(
     match content {
         tdlib::enums::MessageContent::MessageText(content) => {
             if let Some(zk) =
-                crate::zk::parse_text(app, message.chat_id, &content.text.text, message.is_outgoing)
+                crate::zk::parse_text(app, &crate::zk::envelope(message), &content.text.text)
             {
                 return zk;
             }
@@ -86,6 +86,14 @@ fn parse_content<R: tauri::Runtime>(
             });
         }
         tdlib::enums::MessageContent::MessageDocument(content) => {
+            if let Some(zk) = crate::zk::parse_document(
+                app,
+                &crate::zk::envelope(message),
+                &content.caption.text,
+                &content.document.document,
+            ) {
+                return zk;
+            }
             let file_name = &content.document.file_name;
 
             let has_encryption =

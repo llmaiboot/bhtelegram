@@ -25,7 +25,9 @@
         "scope": [
           "**/.*/tdlib/photos/*",
           "**/.*/tdlib/stickers/*",
-          "**/.*/tdlib/voice/*"
+          "**/.*/tdlib/voice/*",
+          "**/zk_plain/*/*",
+          "**/.*/zk_plain/*/*"
         ]
       }
     }

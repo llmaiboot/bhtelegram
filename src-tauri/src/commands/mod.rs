@@ -6,3 +6,4 @@ pub mod files;
 pub mod pgp;
 pub mod privacy;
 pub mod zk;
+pub mod zk_files;

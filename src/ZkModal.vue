@@ -1,7 +1,22 @@
 <script setup lang="ts">
 import { ref } from 'vue';
 import { store } from './store';
-import { zkEndSession, zkSetVerified, zkStatus } from './services/zk';
+import { zkAcceptNewPeer, zkEndSession, zkRejectNewPeer, zkSetVerified, zkStatus } from './services/zk';
+
+async function decideNewPeer(accept: boolean) {
+  if (!store.selectedChat) return;
+  error.value = '';
+  try {
+    if (accept) {
+      await zkAcceptNewPeer(store.selectedChat.id);
+    } else {
+      await zkRejectNewPeer(store.selectedChat.id);
+    }
+    store.selectedZk = await zkStatus(store.selectedChat.id);
+  } catch (err) {
+    error.value = err as string;
+  }
+}
 
 const error = ref('');
 
@@ -45,7 +60,11 @@ async function endSession() {
       <section class="modal-card-body p-3" v-if="store.selectedZk">
         <div v-if="store.selectedZk.peer_changed" class="notification is-danger p-3">
           Ключ собеседника изменился. Это бывает при переустановке приложения, но может означать
-          подмену. Сверьте код безопасности заново.
+          подмену. Отправка заблокирована: сверьте новый код с собеседником голосом.
+          <div class="buttons mt-2">
+            <button class="button is-small is-danger" @click="() => decideNewPeer(false)">Отклонить (вернуть старый ключ)</button>
+            <button class="button is-small" @click="() => decideNewPeer(true)">Принять без проверки</button>
+          </div>
         </div>
         <p class="mb-2">Код безопасности. Сравните его с собеседником лично или по другому каналу
           (звонок). Если цифры совпадают, посредника нет.</p>

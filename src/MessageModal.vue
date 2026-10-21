@@ -90,7 +90,7 @@ function getMessageSelectedText(): string | null {
 
 function setReplyToMessage() {
   store.replyToMessage = store.selectedMessage;
-  store.replyToQuote = getMessageSelectedText();
+  store.replyToQuote = isEncrypted.value ? null : getMessageSelectedText();
   closeModal();
 }
 
@@ -125,6 +125,12 @@ const replyToEnabled = computed(() => {
     return false;
   }
   return chat.can_send;
+});
+
+// Secure / PGP content: no forwarding, replies without quoted text.
+const isEncrypted = computed(() => {
+  const t = store.selectedMessage?.content['@type'];
+  return t === 'messageZk' || t === 'messagePgpText' || t === 'messagePgpFile' || t === 'messagePgpHidden';
 });
 
 const reactions = computed<Record<string, string>>(() => {
@@ -193,7 +199,7 @@ const reactions = computed<Record<string, string>>(() => {
         </div>
       </section>
       <section class="modal-card-body p-3" v-else>
-        <button class="button is-link mb-3" @click="openChatSelection">Forward message</button><br />
+        <button class="button is-link mb-3" @click="openChatSelection" v-if="!isEncrypted">Forward message</button><br v-if="!isEncrypted" />
 
         <button class="button is-link mb-3" @click="setReplyToMessage" v-if="replyToEnabled">
           Reply to message

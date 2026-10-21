@@ -77,10 +77,34 @@ pub fn wipe_plaintext_files_in(dir: &Path) -> Result<usize, Box<dyn Error>> {
     Ok(removed)
 }
 
+/// Folder with decrypted secure-chat attachments (one random subfolder per
+/// file). Wiped completely together with the PGP plaintext copies.
+pub fn zk_plain_dir<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> PathBuf {
+    PathBuf::from(store::get_application_folder(app)).join("zk_plain")
+}
+
+/// Shreds every file below `dir` and removes the folders.
+pub fn wipe_dir(dir: &Path) -> Result<usize, Box<dyn Error>> {
+    if !dir.is_dir() {
+        return Ok(0);
+    }
+    let mut removed = 0;
+    for entry in fs::read_dir(dir)? {
+        let path = entry?.path();
+        if path.is_dir() {
+            removed += wipe_dir(&path)?;
+            let _ = fs::remove_dir(&path);
+        } else if shred(&path).is_ok() {
+            removed += 1;
+        }
+    }
+    Ok(removed)
+}
+
 pub fn wipe_plaintext_files<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
 ) -> Result<usize, Box<dyn Error>> {
-    let removed = wipe_plaintext_files_in(&documents_dir(app))?;
+    let removed = wipe_plaintext_files_in(&documents_dir(app))? + wipe_dir(&zk_plain_dir(app))?;
     if removed > 0 {
         log::debug!("Removed {} decrypted file(s)", removed);
     }
@@ -90,6 +114,19 @@ pub fn wipe_plaintext_files<R: tauri::Runtime>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wipe_dir_removes_nested_files() {
+        let dir = std::env::temp_dir().join(format!(
+            "bhtelegram-wipe-dir-{}",
+            crate::crypto::utils::generate_random_string(8)
+        ));
+        fs::create_dir_all(dir.join("a")).unwrap();
+        fs::write(dir.join("a/secret.jpg"), b"secret").unwrap();
+        fs::write(dir.join("b.txt"), b"secret").unwrap();
+        assert_eq!(wipe_dir(&dir).unwrap(), 2);
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 0);
+    }
 
     #[test]
     fn removes_only_decrypted_copies() {

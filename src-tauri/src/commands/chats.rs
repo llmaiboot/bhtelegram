@@ -168,6 +168,7 @@ pub async fn send_message<R: tauri::Runtime>(
     reply_to: Option<InputMessageReplyTo>,
     content: InputMessageContent,
 ) -> Result<Message, String> {
+    crate::zk::guard_plain_send(&app, chat_id)?;
     let input_message_content = content.prepare_message(&app, chat_id).await?;
 
     let result = tdlib::functions::send_message(
@@ -235,6 +236,20 @@ pub async fn forward_message<R: tauri::Runtime>(
     message_id: i64,
     send_copy: bool,
 ) -> Result<Vec<Message>, String> {
+    crate::zk::guard_plain_send(&app, chat_id)?;
+    // Never forward secure-chat traffic (ciphertext, invitations).
+    let tdlib::enums::Message::Message(src) =
+        tdlib::functions::get_message(from_chat_id, message_id, state::get_client_id(&app))
+            .await
+            .map_err(|e| e.message)?;
+    let wire = match &src.content {
+        tdlib::enums::MessageContent::MessageText(t) => Some(t.text.text.as_str()),
+        tdlib::enums::MessageContent::MessageDocument(d) => Some(d.caption.text.as_str()),
+        _ => None,
+    };
+    if wire.map(crate::crypto::zk::engine::ZkEngine::looks_like_zk).unwrap_or(false) {
+        return Err("Сообщения защищённого чата пересылать нельзя".into());
+    }
     tdlib::functions::forward_messages(
         chat_id,
         None,

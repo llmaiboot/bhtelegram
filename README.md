@@ -74,10 +74,15 @@ Idea and threat model from [zkgram](https://github.com/Gerate-Technik/zkgram): T
 | MITM protection | 60-digit safety number, identical on both phones; compare it by voice and press "Codes match". If the peer's identity changes the shield turns red |
 | Ciphertext disguise | Bytes are encoded as Russian words (WordCoder dictionary from zkgram), Telegram sees a line of words, not base64 |
 | Local data | Identity, ratchet state and decrypted history encrypted with Argon2id (from the passphrase) + XChaCha20-Poly1305; nothing in plaintext on disk |
-| Secret view | Decrypted text is shown only after the eye button, as for PGP |
+| Secret view | Decrypted text and files are shown only after the eye button (the PGP auto-decrypt option does not apply) |
+| Files and voice | Each attachment gets a random key (XChaCha20-Poly1305); the key travels in the ratchet as the caption, the file in Telegram is opaque (no real name or type). Voice is recorded in the app and sent the same way |
+| Account binding | Invitations and identities are signed together with the Telegram user id: forwarded invites or relayed handshakes from another account are rejected |
+| Key change | A new identity in a chat blocks sending until the user compares the new code, accepts it or rolls back to the old key |
+| Replay | The same ciphertext posted again as a new message, or own ciphertext posted as the peer's, is shown as undecryptable |
+| No downgrade | Plain sending and forwarding are refused in Rust while a secure session is active |
 | Phone | No screenshots / recent-apps preview (FLAG_SECURE), no cloud backup, auto-lock after 60 s in background, Lock item in the menu |
 
-Limits: only text for now (files go through PGP), messages are readable only on the device that received them (no multi-device), metadata (who talks to whom and when) stays visible to Telegram. Both sides need BhTelegram.
+Limits: attachments up to 50 MB and only after the peer answered once; messages are readable only on the device that received them (no multi-device), metadata (who talks to whom and when) stays visible to Telegram. Both sides need BhTelegram.
 
 The engine (`src-tauri/src/crypto/zk`) has no dependency on Tauri or TDLib (enforced by `tests/layers.rs`) and is covered by end-to-end tests: handshake, out-of-order delivery, restart, tampering, key change, chunking, re-keying.
 

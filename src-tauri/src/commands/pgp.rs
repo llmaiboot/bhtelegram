@@ -193,9 +193,23 @@ pub async fn change_passphrase<R: tauri::Runtime>(
     let new_sec_key_armored =
         crypto::pgp::change_key_passphrase(&key, &old_passphrase, &new_passphrase)
             .map_err(|e| e.to_string())?;
-    crate::zk::with_engine(&app, |e| e.rekey(&new_passphrase))?;
-    store::set_secret_key(&app, &new_sec_key_armored);
-    state::set_pgp_passphrase(&app, &new_passphrase);
+    let epoch = crate::zk::epoch(&app);
+    // 1) ZK: new wrap prepared, old still valid
+    crate::zk::with_engine(&app, |e| e.prepare_rekey(&new_passphrase))?;
+    // 2) PGP key with the new passphrase; failure rolls back step 1
+    if let Err(e) = store::set_secret_key_checked(&app, &new_sec_key_armored) {
+        let _ = crate::zk::with_engine(&app, |z| {
+            z.abort_rekey();
+            Ok(())
+        });
+        return Err(e);
+    }
+    // 3) commit ZK (a crash before this is repaired at next unlock)
+    crate::zk::with_engine(&app, |e| e.commit_rekey())?;
+    state::forget_cached_key(&app);
+    if crate::zk::epoch(&app) == epoch {
+        state::set_pgp_passphrase(&app, &new_passphrase);
+    }
     Ok(())
 }
 

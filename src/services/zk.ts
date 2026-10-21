@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import { Message } from '../model';
+import { Message, ZkOpenedFile } from '../model';
 
 export type ZkStatus = {
   state: 'none' | 'active';
@@ -33,6 +33,26 @@ export async function zkSetVerified(chatId: number, verified: boolean): Promise<
   await invoke('zk_set_verified', { chatId, verified });
 }
 
+export async function zkAcceptNewPeer(chatId: number): Promise<void> {
+  await invoke('zk_accept_new_peer', { chatId });
+}
+
+export async function zkRejectNewPeer(chatId: number): Promise<void> {
+  await invoke('zk_reject_new_peer', { chatId });
+}
+
 export async function lockApp(): Promise<void> {
   await invoke('lock_app');
+}
+
+export async function zkSendFile(chatId: number, path: string, caption: string | null): Promise<Message> {
+  return await invoke<Message>('zk_send_file', { chatId, path, caption });
+}
+
+export async function zkSendVoice(chatId: number, data: Uint8Array, mime: string): Promise<Message> {
+  return await invoke<Message>('zk_send_voice', { chatId, data: Array.from(data), mime });
+}
+
+export async function zkOpenFile(chatId: number, messageId: number): Promise<ZkOpenedFile> {
+  return await invoke<ZkOpenedFile>('zk_open_file', { chatId, messageId });
 }

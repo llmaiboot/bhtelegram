@@ -104,6 +104,17 @@ pub fn set_secret_key<R: tauri::Runtime>(app: &tauri::AppHandle<R>, secret_key: 
     set_value(app, SECRET_KEY, secret_key)
 }
 
+/// Like `set_secret_key`, but reports a failed save (passphrase change must
+/// not continue if the new key is not on disk).
+pub fn set_secret_key_checked<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+    secret_key: &str,
+) -> Result<(), String> {
+    let store = app.store("store.json").map_err(|e| e.to_string())?;
+    store.set(SECRET_KEY, secret_key);
+    store.save().map_err(|e| e.to_string())
+}
+
 pub fn get_encrypt_database<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> bool {
     get_bool(app, ENCRYPT_DATABASE)
 }

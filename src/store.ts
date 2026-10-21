@@ -26,6 +26,9 @@ type Store = {
   selectedChatRevealed: boolean;
   // Zero-knowledge (Double Ratchet) session of the selected chat
   selectedZk: ZkStatus | null;
+  // true while the ZK status of the selected chat is unknown (loading,
+  // locked or error): sending is blocked, never downgraded to plaintext
+  zkUnknown: boolean;
   zkModalActive: boolean;
   loadingNewMessages: boolean;
   messagesToLoad: number[];
@@ -141,6 +144,7 @@ export const store = reactive<Store>({
   selectedChatKey: '',
   selectedChatRevealed: false,
   selectedZk: null,
+  zkUnknown: false,
   zkModalActive: false,
   loadingNewMessages: false,
   messagesToLoad: [],

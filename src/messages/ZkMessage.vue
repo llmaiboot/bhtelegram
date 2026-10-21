@@ -5,6 +5,7 @@ import { store } from '../store';
 import { FontAwesomeIcon } from '@fortawesome/vue-fontawesome';
 import { faShieldHalved, faEyeSlash, faTriangleExclamation, faLock } from '@fortawesome/free-solid-svg-icons';
 import { zkAcceptInvite, zkStatus } from '../services/zk';
+import ZkFileMessage from './ZkFileMessage.vue';
 
 const props = defineProps<{
   message: MessageWithStatus,
@@ -16,6 +17,10 @@ const error = ref('');
 
 async function accept() {
   error.value = '';
+  if (store.selectedZk?.state === 'active'
+    && !confirm('Защищённый сеанс уже идёт. Принять новое приглашение и заменить ключи?')) {
+    return;
+  }
   busy.value = true;
   try {
     await zkAcceptInvite(props.message.chat_id, props.message.id);
@@ -46,8 +51,10 @@ onMounted(async () => {
     <template v-if="content.kind === 'text'">
       <p class="zk-text">{{ content.text }}</p>
     </template>
+    <ZkFileMessage v-else-if="content.kind === 'file'" :message="message" :content="content" />
     <p v-else-if="content.kind === 'hidden'" class="is-italic has-text-grey">
-      <FontAwesomeIcon :icon="faEyeSlash" class="mr-1" /> Защищённое сообщение — скрыто
+      <FontAwesomeIcon :icon="faEyeSlash" class="mr-1" />
+      {{ content.voice ? 'Защищённое голосовое' : content.is_file ? 'Защищённый файл' : 'Защищённое сообщение' }} — скрыто
     </p>
     <div v-else-if="content.kind === 'invite'">
       <p>
@@ -55,7 +62,7 @@ onMounted(async () => {
         <template v-if="content.outgoing">Вы пригласили в защищённый чат. Ждём ответа.</template>
         <template v-else>Приглашение в защищённый чат (Double Ratchet).</template>
       </p>
-      <button v-if="!content.outgoing" type="button" class="button is-small is-success mt-2" :disabled="busy"
+      <button v-if="!content.outgoing && message.sender_user_id !== store.myId" type="button" class="button is-small is-success mt-2" :disabled="busy"
         @click="accept">Принять</button>
       <p v-if="error" class="has-text-danger is-size-7 mt-1">{{ error }}</p>
     </div>

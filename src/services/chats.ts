@@ -92,6 +92,14 @@ export async function selectChat(id: number, reload: boolean = false) {
       }
       await invoke('close_chat', { id: store.selectedChat.id })
     }
+    if (store.selectedChat !== null && store.selectedChat.id !== id) {
+      // decrypted history of the previous chat leaves memory
+      invoke('zk_unload_chat', { chatId: store.selectedChat.id }).catch(() => { });
+    }
+    store.selectedZk = null;
+    store.zkUnknown = true;
+    store.replyToMessage = null;
+    store.replyToQuote = null;
     store.clearMessages();
     store.lastMessageId = 0;
     store.selectChat(id);
@@ -101,9 +109,13 @@ export async function selectChat(id: number, reload: boolean = false) {
     store.selectedChatKey = await getChatKey(id);
     store.selectedChatRevealed = await isChatRevealed(id);
     try {
-      store.selectedZk = await zkStatus(id);
+      const st = await zkStatus(id);
+      if (store.selectedChat?.id === id) {
+        store.selectedZk = st;
+        store.zkUnknown = false;
+      }
     } catch {
-      store.selectedZk = null;
+      store.selectedZk = null; // stays zkUnknown: sending blocked
     }
     store.loadingNewMessages = true;
     const messages = await invoke<Message[]>('open_chat', {
@@ -249,7 +261,7 @@ export function getMessageTextContent(content: MessageContent): string | null {
     return content.text;
   }
   if (content['@type'] === 'messageZk') {
-    return content.text;
+    return '🔒 Защищённое сообщение';
   }
   if ('caption' in content && content.caption) {
     return content.caption;

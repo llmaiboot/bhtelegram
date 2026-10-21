@@ -94,6 +94,12 @@ pub fn run() {
             commands::zk::zk_end_session,
             commands::zk::zk_status,
             commands::zk::zk_set_verified,
+            commands::zk::zk_accept_new_peer,
+            commands::zk::zk_reject_new_peer,
+            commands::zk::zk_unload_chat,
+            commands::zk_files::zk_send_file,
+            commands::zk_files::zk_send_voice,
+            commands::zk_files::zk_open_file,
             commands::init::lock_app,
             commands::init::unlock_app,
         ])
@@ -112,7 +118,19 @@ pub fn run() {
             // only when the app stayed in background longer than a minute.
             #[cfg(mobile)]
             tauri::WindowEvent::Suspended => {
-                SUSPENDED_AT.store(now_secs(), std::sync::atomic::Ordering::SeqCst);
+                let at = now_secs();
+                SUSPENDED_AT.store(at, std::sync::atomic::Ordering::SeqCst);
+                // Lock while still in background, not only on return: the
+                // unlocked state must not live in memory indefinitely.
+                let app = window.app_handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(AUTO_LOCK_SECS));
+                    if SUSPENDED_AT.load(std::sync::atomic::Ordering::SeqCst) == at
+                        && state::is_logged_in(&app)
+                    {
+                        commands::init::lock_app(app);
+                    }
+                });
             }
             #[cfg(mobile)]
             tauri::WindowEvent::Resumed => {

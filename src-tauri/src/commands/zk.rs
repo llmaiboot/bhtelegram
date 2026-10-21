@@ -59,7 +59,8 @@ pub async fn zk_accept_invite<R: tauri::Runtime>(
     let tdlib::enums::MessageContent::MessageText(content) = &m.content else {
         return Err("not an invitation".into());
     };
-    let reply = zk::with_engine(&app, |e| e.accept_invite(chat_id, &content.text.text))?;
+    let env = zk::envelope(&m);
+    let reply = zk::with_engine(&app, |e| e.accept_invite(&env, &content.text.text))?;
     send_text(&app, chat_id, reply).await
 }
 
@@ -86,7 +87,31 @@ pub async fn zk_end_session<R: tauri::Runtime>(
     chat_id: i64,
 ) -> Result<Message, String> {
     let text = zk::with_engine(&app, |e| e.end_session(chat_id))?;
-    send_text(&app, chat_id, text).await
+    // Keys are dropped only once the peer can learn the session ended.
+    let msg = send_text(&app, chat_id, text).await?;
+    zk::with_engine(&app, |e| e.forget_sessions(chat_id))?;
+    Ok(msg)
+}
+
+/// The user accepts a changed peer identity without comparing codes.
+#[tauri::command]
+pub fn zk_accept_new_peer<R: tauri::Runtime>(app: tauri::AppHandle<R>, chat_id: i64) -> Result<(), String> {
+    zk::with_engine(&app, |e| e.accept_new_peer(chat_id))
+}
+
+/// The user rejects a changed peer identity (possible attack).
+#[tauri::command]
+pub fn zk_reject_new_peer<R: tauri::Runtime>(app: tauri::AppHandle<R>, chat_id: i64) -> Result<(), String> {
+    zk::with_engine(&app, |e| e.reject_new_peer(chat_id))
+}
+
+/// Drops decrypted history of a closed chat from memory.
+#[tauri::command]
+pub fn zk_unload_chat<R: tauri::Runtime>(app: tauri::AppHandle<R>, chat_id: i64) {
+    let _ = zk::with_engine(&app, |e| {
+        e.unload_chat(chat_id);
+        Ok(())
+    });
 }
 
 #[tauri::command]

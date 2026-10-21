@@ -40,26 +40,43 @@ pub fn save_initial_config<R: tauri::Runtime>(
         .map_err(|e| e.to_string())
 }
 
+/// PGP check + Argon2 are slow: run off the main thread, and give up if
+/// the app was locked meanwhile.
+async fn do_unlock<R: tauri::Runtime>(app: tauri::AppHandle<R>, passphrase: String) -> Result<(), String> {
+    let epoch = crate::zk::epoch(&app);
+    let app2 = app.clone();
+    let pass = zeroize::Zeroizing::new(passphrase);
+    tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
+        let key = state::get_my_key(&app2).map_err(|e| e.to_string())?;
+        crypto::pgp::check_secret_key(&key, &pass).map_err(|e| e.to_string())?;
+        crate::zk::unlock(&app2, &pass, epoch)?;
+        if crate::zk::epoch(&app2) != epoch {
+            crate::zk::lock(&app2);
+            return Err("app was locked".into());
+        }
+        state::set_pgp_passphrase(&app2, &pass);
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
 #[tauri::command]
-pub fn check_pgp_passphrase<R: tauri::Runtime>(
+pub async fn check_pgp_passphrase<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    passphrase: &str,
+    passphrase: String,
 ) -> Result<(), String> {
-    let key = state::get_my_key(&app).map_err(|e| e.to_string())?;
-    crypto::pgp::check_secret_key(&key, passphrase).map_err(|e| e.to_string())?;
-    crate::zk::unlock(&app, passphrase)?;
-    state::set_pgp_passphrase(&app, passphrase);
-    Ok(())
+    do_unlock(app, passphrase).await
 }
 
 /// Auto-lock (app went to background / user pressed lock): forget the
-/// passphrase, the unlocked ZK engine and every revealed chat, wipe
-/// decrypted files. TDLib keeps running so delivery is not interrupted.
+/// passphrase, the decrypted PGP key, the unlocked ZK engine and every
+/// revealed chat, wipe decrypted files. TDLib keeps running so delivery is
+/// not interrupted.
 #[tauri::command]
 pub fn lock_app<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
     crate::zk::lock(&app);
-    state::set_pgp_passphrase(&app, "");
-    state::hide_all_chats(&app);
+    state::forget_secrets(&app);
     if let Err(e) = crypto::plaintext::wipe_plaintext_files(&app) {
         log::warn!("Unable to wipe decrypted files: {}", e);
     }
@@ -67,15 +84,11 @@ pub fn lock_app<R: tauri::Runtime>(app: tauri::AppHandle<R>) {
 }
 
 #[tauri::command]
-pub fn unlock_app<R: tauri::Runtime>(
+pub async fn unlock_app<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
-    passphrase: &str,
+    passphrase: String,
 ) -> Result<(), String> {
-    let key = state::get_my_key(&app).map_err(|e| e.to_string())?;
-    crypto::pgp::check_secret_key(&key, passphrase).map_err(|e| e.to_string())?;
-    crate::zk::unlock(&app, passphrase)?;
-    state::set_pgp_passphrase(&app, passphrase);
-    Ok(())
+    do_unlock(app, passphrase).await
 }
 
 #[tauri::command]

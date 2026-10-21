@@ -35,6 +35,40 @@ impl Vault {
     /// Loads the data key from `key_path`, or creates one on first use.
     /// A wrong passphrase fails; nothing is overwritten.
     pub fn unlock(key_path: &Path, passphrase: &str) -> Result<Self, String> {
+        let next = next_path(key_path);
+        match Self::unlock_one(key_path, passphrase) {
+            Ok(v) => {
+                // A passphrase change that never completed: forget it.
+                let _ = fs::remove_file(&next);
+                Ok(v)
+            }
+            Err(e) if next.exists() => {
+                // Crash after the PGP key was switched but before key.bin was:
+                // the new passphrase opens the pending file; finish the change.
+                let v = Self::unlock_one(&next, passphrase).map_err(|_| e)?;
+                fs::rename(&next, key_path).map_err(|e| e.to_string())?;
+                Ok(v)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Step 1 of a passphrase change: the data key wrapped with the new
+    /// passphrase goes to `key.bin.next`; `key.bin` is untouched.
+    pub fn prepare_rewrap(&self, key_path: &Path, new_passphrase: &str) -> Result<(), String> {
+        self.wrap_to(&next_path(key_path), new_passphrase)
+    }
+
+    /// Step 2: make the new wrap current.
+    pub fn commit_rewrap(key_path: &Path) -> Result<(), String> {
+        fs::rename(next_path(key_path), key_path).map_err(|e| e.to_string())
+    }
+
+    pub fn abort_rewrap(key_path: &Path) {
+        let _ = fs::remove_file(next_path(key_path));
+    }
+
+    fn unlock_one(key_path: &Path, passphrase: &str) -> Result<Self, String> {
         match fs::read(key_path) {
             Ok(data) => {
                 if data.len() < SALT_LEN {
@@ -126,14 +160,38 @@ impl Vault {
     }
 }
 
+fn next_path(key_path: &Path) -> std::path::PathBuf {
+    key_path.with_extension("bin.next")
+}
+
+/// Unique temp file (0600) + fsync + rename + fsync of the directory, so a
+/// crash or power loss leaves either the old or the new file, never a mix.
 pub fn write_atomic(path: &Path, data: &[u8]) -> Result<(), String> {
-    let tmp = path.with_extension("tmp");
-    {
-        let mut f = fs::File::create(&tmp).map_err(|e| e.to_string())?;
-        f.write_all(data).map_err(|e| e.to_string())?;
-        f.sync_all().map_err(|e| e.to_string())?;
+    let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("f");
+    let tmp = path.with_file_name(format!(".{}.{}.tmp", name, hex::encode(random_bytes::<6>())));
+    let res = (|| -> std::io::Result<()> {
+        let mut opts = fs::OpenOptions::new();
+        opts.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        let mut f = opts.open(&tmp)?;
+        f.write_all(data)?;
+        f.sync_all()?;
+        drop(f);
+        fs::rename(&tmp, path)?;
+        #[cfg(unix)]
+        if let Some(dir) = path.parent() {
+            fs::File::open(dir)?.sync_all()?;
+        }
+        Ok(())
+    })();
+    if res.is_err() {
+        let _ = fs::remove_file(&tmp);
     }
-    fs::rename(&tmp, path).map_err(|e| e.to_string())
+    res.map_err(|e| e.to_string())
 }
 
 pub fn random_bytes<const N: usize>() -> [u8; N] {
@@ -171,6 +229,24 @@ mod tests {
         assert!(Vault::unlock(&kp, "one").is_err());
         let v2 = Vault::unlock(&kp, "two").unwrap();
         assert_eq!(&v2.open("x", &sealed).unwrap()[..], b"data");
+    }
+
+    #[test]
+    fn interrupted_passphrase_change_recovers() {
+        let dir = std::env::temp_dir().join(format!("bhzk-rewrap-{}", rand::random::<u32>()));
+        fs::create_dir_all(&dir).unwrap();
+        let kp = dir.join("key.bin");
+        let v = Vault::unlock(&kp, "old").unwrap();
+        let sealed = v.seal("x", b"data").unwrap();
+        v.prepare_rewrap(&kp, "new").unwrap();
+        // crash here: both passphrases must still work
+        let w = Vault::unlock(&kp, "new").unwrap(); // promotes .next
+        assert_eq!(&w.open("x", &sealed).unwrap()[..], b"data");
+        assert!(Vault::unlock(&kp, "old").is_err());
+        // stale .next is discarded when the current passphrase works
+        w.prepare_rewrap(&kp, "newer").unwrap();
+        assert!(Vault::unlock(&kp, "new").is_ok());
+        assert!(Vault::unlock(&kp, "newer").is_err());
     }
 
     #[test]

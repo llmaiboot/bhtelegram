@@ -16,7 +16,47 @@ import ChatKeyModal from './ChatKeyModal.vue';
 import UserModal from './UserModal.vue';
 import ZkModal from './ZkModal.vue';
 import { faShieldHalved } from '@fortawesome/free-solid-svg-icons';
-import { zkSendText, zkStartSession, zkStatus } from './services/zk';
+import { zkSendFile, zkSendText, zkSendVoice, zkStartSession, zkStatus } from './services/zk';
+import { faMicrophone, faStop } from '@fortawesome/free-solid-svg-icons';
+
+// Voice messages in secure chats: recorded in the WebView, sent only through
+// the ratchet (never as a plain Telegram voice note).
+let recorder: MediaRecorder | null = null;
+let recordedChunks: Blob[] = [];
+const recording = ref(false);
+
+async function toggleRecording() {
+  const chat = store.selectedChat;
+  if (!chat) return;
+  zkError.value = '';
+  if (recording.value && recorder) {
+    recorder.stop();
+    return;
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const mime = ['audio/ogg;codecs=opus', 'audio/webm;codecs=opus', 'audio/mp4']
+      .find(m => MediaRecorder.isTypeSupported(m)) || '';
+    recorder = mime ? new MediaRecorder(stream, { mimeType: mime }) : new MediaRecorder(stream);
+    recordedChunks = [];
+    recorder.ondataavailable = (e) => { if (e.data.size > 0) recordedChunks.push(e.data); };
+    recorder.onstop = async () => {
+      stream.getTracks().forEach(t => t.stop());
+      recording.value = false;
+      const blob = new Blob(recordedChunks, { type: recorder?.mimeType || mime });
+      recordedChunks = [];
+      try {
+        await zkSendVoice(chat.id, new Uint8Array(await blob.arrayBuffer()), blob.type || 'audio/webm');
+      } catch (err) {
+        zkError.value = err as string;
+      }
+    };
+    recorder.start();
+    recording.value = true;
+  } catch (err) {
+    zkError.value = 'Нет доступа к микрофону: ' + err;
+  }
+}
 
 const zkActive = computed(() => store.selectedZk?.state === 'active');
 const zkError = ref('');
@@ -102,23 +142,51 @@ function scrollToMessage(messageId: number) {
   }
 }
 
+const sending = ref(false);
+
+function clearIfSame(chatId: number) {
+  if (store.selectedChat?.id === chatId) {
+    clear();
+  }
+}
+
 async function send() {
   const chat = store.selectedChat;
-  if (chat && zkActive.value) {
+  if (!chat || sending.value) {
+    return;
+  }
+  if (store.zkUnknown) {
+    zkError.value = 'Статус защищённого чата не определён — отправка заблокирована';
+    return;
+  }
+  if (zkActive.value) {
     zkError.value = '';
-    if (selectedFiles.value.length > 0) {
-      zkError.value = 'Файлы в защищённом чате пока не поддерживаются';
+    const text = newMessageText.value;
+    const files = selectedFiles.value.slice();
+    if (text.trim() === '' && files.length === 0) {
       return;
     }
+    sending.value = true;
     try {
-      await zkSendText(chat.id, newMessageText.value);
-      clear();
+      if (files.length > 0) {
+        let caption: string | null = text.trim() === '' ? null : text;
+        for (const file of files) {
+          await zkSendFile(chat.id, file.path, caption);
+          caption = null;
+        }
+        clearIfSame(chat.id);
+        return;
+      }
+      await zkSendText(chat.id, text);
+      clearIfSame(chat.id);
       const chatContent = document.getElementById('chat-content');
       if (chatContent) {
         chatContent.scrollTo(0, chatContent.scrollHeight);
       }
     } catch (err) {
       zkError.value = err as string;
+    } finally {
+      sending.value = false;
     }
     return;
   }
@@ -444,9 +512,15 @@ watch(() => store.selectedChat?.id, () => clear());
     <div class="notification is-danger is-light p-2 m-1" v-if="zkError">{{ zkError }}</div>
     <div id="send-message-box" v-if="canWriteMessages">
       <input type="text" class="input" id="new-message-text" v-model="newMessageText" @keyup.enter="send"
-        :placeholder="zkActive ? 'Защищённое сообщение' : ''" :class="{ 'is-success': zkActive }" />
+        :placeholder="zkActive ? 'Защищённое сообщение' : ''" :class="{ 'is-success': zkActive }"
+        :disabled="store.zkUnknown || sending" autocomplete="off" autocorrect="off" autocapitalize="off"
+        spellcheck="false" />
       <button type="button" class="button is-primary" @click="selectFiles" aria-label="Attach file">
         <FontAwesomeIcon :icon="faPaperclip" />
+      </button>
+      <button v-if="zkActive" type="button" class="button" :class="recording ? 'is-danger' : 'is-info'"
+        @click="toggleRecording" :aria-label="recording ? 'Stop recording' : 'Record voice'">
+        <FontAwesomeIcon :icon="recording ? faStop : faMicrophone" />
       </button>
       <button type="button" class="button is-link" @click="send" aria-label="Send">
         <FontAwesomeIcon :icon="faPaperPlane" />

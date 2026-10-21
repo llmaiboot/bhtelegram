@@ -116,6 +116,7 @@ impl Client {
                 if option.name == "my_id" {
                     if let OptionValue::Integer(value) = option.value {
                         state::set_my_id(&app, value.value);
+                        crate::zk::set_my_id(&app, value.value);
                         emit(app, "my-id", value.value);
                     }
                 }

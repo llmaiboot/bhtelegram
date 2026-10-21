@@ -470,6 +470,19 @@ pub struct MessageZk {
     pub kind: String,
     pub text: Option<String>,
     pub outgoing: bool,
+    /// kind "file" / hidden file: encrypted Telegram document
+    pub file: Option<File>,
+    pub is_file: bool,
+    pub voice: bool,
+}
+
+/// Decrypted secure-chat attachment, written to the wiped `zk_plain` folder.
+#[derive(serde::Serialize, Clone)]
+pub struct ZkOpenedFile {
+    pub path: String,
+    pub name: String,
+    pub mime: String,
+    pub caption: Option<String>,
 }
 
 #[derive(serde::Serialize, Clone)]
